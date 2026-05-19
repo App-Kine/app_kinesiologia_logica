@@ -157,8 +157,173 @@ async function obtener(request, response) {
     }
 }
 
+async function editar(request, response) {
+    const b = _leerArg(request);
+    const preguntaId = Number(b.preguntaId);
+    const creadoPor = Number(b.creadoPor); // viene del JWT a través del controlador
+    logger.log(`${TAG} editar: preguntaId=${preguntaId} creadoPor=${creadoPor}`);
+    try {
+        if (!Number.isInteger(preguntaId) || preguntaId <= 0)
+            return response.json(reply.error("preguntaId requerido"));
+        if (!b.enunciado || typeof b.enunciado !== "string")
+            return response.json(reply.error("enunciado requerido"));
+        if (!b.explicacionClinica || typeof b.explicacionClinica !== "string")
+            return response.json(reply.error("explicacionClinica requerida (RF-63)"));
+        if (b.audioGridId && !GRID_ID_RE.test(b.audioGridId))
+            return response.json(reply.error("audioGridId inválido"));
+        if (b.imagenGridId && !GRID_ID_RE.test(b.imagenGridId))
+            return response.json(reply.error("imagenGridId inválido"));
+
+        const errAlts = _validarAlternativas(b.alternativas);
+        if (errAlts) return response.json(reply.error(errAlts));
+
+        const res = await preguntaRepo.editarPreguntaConAlternativas(
+            preguntaId,
+            {
+                enunciado: b.enunciado.trim(),
+                explicacionClinica: b.explicacionClinica.trim(),
+                audioGridId: b.audioGridId || null,
+                imagenGridId: b.imagenGridId || null,
+                alternativas: b.alternativas.map((a) => ({
+                    texto: a.texto.trim(),
+                    esCorrecta: a.esCorrecta === true,
+                    orden: a.orden,
+                })),
+            },
+            Number.isInteger(creadoPor) && creadoPor > 0 ? creadoPor : null
+        );
+
+        if (!res.ok) {
+            logger.log(`${TAG} editar: no se actualizó (${res.reason})`);
+            const msg =
+                res.reason === "FORBIDDEN"
+                    ? "Solo el creador puede editar esta pregunta"
+                    : "Pregunta no encontrada";
+            return response.json(reply.error(msg));
+        }
+
+        logger.log(`${TAG} editar: OK pregunta_id=${preguntaId}`);
+        response.json(reply.ok({ pregunta_id: preguntaId }));
+    } catch (e) {
+        logger.log(`${TAG_ERR} editar: ${e.message}`, e);
+        response.json(reply.fatal(e));
+    }
+}
+
+async function eliminar(request, response) {
+    const b = _leerArg(request);
+    const preguntaId = Number(b.preguntaId);
+    const creadoPor = Number(b.creadoPor);
+    logger.log(`${TAG} eliminar: preguntaId=${preguntaId} creadoPor=${creadoPor}`);
+    try {
+        if (!Number.isInteger(preguntaId) || preguntaId <= 0)
+            return response.json(reply.error("preguntaId requerido"));
+
+        const res = await preguntaRepo.eliminarPregunta(
+            preguntaId,
+            Number.isInteger(creadoPor) && creadoPor > 0 ? creadoPor : null
+        );
+
+        if (!res.ok) {
+            logger.log(`${TAG} eliminar: no se eliminó (${res.reason})`);
+            const msg =
+                res.reason === "FORBIDDEN"
+                    ? "Solo el creador puede eliminar esta pregunta"
+                    : res.reason === "ALREADY_INACTIVE"
+                    ? "La pregunta ya estaba eliminada"
+                    : "Pregunta no encontrada";
+            return response.json(reply.error(msg));
+        }
+
+        logger.log(`${TAG} eliminar: OK pregunta_id=${preguntaId}`);
+        response.json(reply.ok({ pregunta_id: preguntaId }));
+    } catch (e) {
+        logger.log(`${TAG_ERR} eliminar: ${e.message}`, e);
+        response.json(reply.fatal(e));
+    }
+}
+
+/**
+ * Crea una pregunta y la vincula a un test, todo en uno.
+ * Body: { testId, enunciado, explicacionClinica, alternativas, audioGridId?, imagenGridId? }
+ */
+async function agregarATest(request, response) {
+    const b = _leerArg(request);
+    const testId = Number(b.testId);
+    const creadoPor = Number(b.creadoPor);
+    logger.log(`${TAG} agregarATest: testId=${testId} creadoPor=${creadoPor}`);
+    try {
+        if (!Number.isInteger(testId) || testId <= 0)
+            return response.json(reply.error("testId requerido"));
+        if (!Number.isInteger(creadoPor) || creadoPor <= 0)
+            return response.json(reply.error("creadoPor requerido"));
+        if (!b.enunciado || typeof b.enunciado !== "string")
+            return response.json(reply.error("enunciado requerido"));
+        if (!b.explicacionClinica || typeof b.explicacionClinica !== "string")
+            return response.json(reply.error("explicacionClinica requerida"));
+        if (b.audioGridId && !GRID_ID_RE.test(b.audioGridId))
+            return response.json(reply.error("audioGridId inválido"));
+        if (b.imagenGridId && !GRID_ID_RE.test(b.imagenGridId))
+            return response.json(reply.error("imagenGridId inválido"));
+        const errAlts = _validarAlternativas(b.alternativas);
+        if (errAlts) return response.json(reply.error(errAlts));
+
+        // 1) Crear la pregunta
+        const preguntaId = await preguntaRepo.crearPreguntaConAlternativas({
+            enunciado: b.enunciado.trim(),
+            explicacionClinica: b.explicacionClinica.trim(),
+            audioGridId: b.audioGridId || null,
+            imagenGridId: b.imagenGridId || null,
+            creadoPor: creadoPor,
+            cursoOrigenId: null,
+            alternativas: b.alternativas.map((a) => ({
+                texto: a.texto.trim(),
+                esCorrecta: a.esCorrecta === true,
+                orden: a.orden,
+            })),
+        });
+
+        // 2) Vincularla al test
+        const orden = await preguntaRepo.vincularATest(preguntaId, testId);
+
+        logger.log(`${TAG} agregarATest: OK preguntaId=${preguntaId} orden=${orden}`);
+        response.json(reply.ok({ pregunta_id: preguntaId, orden: orden }));
+    } catch (e) {
+        logger.log(`${TAG_ERR} agregarATest: ${e.message}`, e);
+        response.json(reply.fatal(e));
+    }
+}
+
+/**
+ * Desvincula una pregunta de un test. Si la pregunta queda huérfana,
+ * la marca como inactiva (soft delete).
+ */
+async function quitarDeTest(request, response) {
+    const b = _leerArg(request);
+    const testId = Number(b.testId);
+    const preguntaId = Number(b.preguntaId);
+    logger.log(`${TAG} quitarDeTest: testId=${testId} preguntaId=${preguntaId}`);
+    try {
+        if (!Number.isInteger(testId) || testId <= 0)
+            return response.json(reply.error("testId requerido"));
+        if (!Number.isInteger(preguntaId) || preguntaId <= 0)
+            return response.json(reply.error("preguntaId requerido"));
+
+        const res = await preguntaRepo.desvincularDeTest(preguntaId, testId);
+        logger.log(`${TAG} quitarDeTest: OK huerfanaEliminada=${res.huerfanaEliminada}`);
+        response.json(reply.ok({ huerfanaEliminada: res.huerfanaEliminada }));
+    } catch (e) {
+        logger.log(`${TAG_ERR} quitarDeTest: ${e.message}`, e);
+        response.json(reply.fatal(e));
+    }
+}
+
 module.exports = {
     crear,
     listar,
     obtener,
+    editar,
+    eliminar,
+    agregarATest,
+    quitarDeTest,
 };

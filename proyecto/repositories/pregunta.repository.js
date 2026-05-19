@@ -74,7 +74,7 @@ async function crearPreguntaConAlternativas(p) {
 
 /**
  * Lista preguntas creadas por un profesor (o todas si es null).
- * No retorna alternativas para mantener el payload liviano.
+ * No retorna alternativas, pero sí su conteo.
  */
 async function listarPorProfesor(profesorId) {
     const r = await db
@@ -89,7 +89,9 @@ async function listarPorProfesor(profesorId) {
                     p.imagen_grid_id,
                     p.activo,
                     p.created_at,
-                    p.updated_at
+                    p.updated_at,
+                    (SELECT COUNT(*) FROM auris.alternativa a
+                     WHERE a.pregunta_id = p.pregunta_id) AS cantidad_alternativas
             FROM    auris.pregunta p
             LEFT JOIN auris.curso c ON c.curso_id = p.curso_origen_id
             WHERE   p.activo = 1
@@ -97,6 +99,155 @@ async function listarPorProfesor(profesorId) {
             ORDER BY p.created_at DESC;
         `);
     return r.recordset;
+}
+
+/**
+ * Actualiza enunciado/explicación/multimedia + reemplaza alternativas (RF-67).
+ * Solo el creador puede editar (lo valida el caller con creadoPorEsperado).
+ *
+ * @param {number} preguntaId
+ * @param {object} p (mismos campos que crearPreguntaConAlternativas pero sin creadoPor)
+ * @param {number|null} creadoPorEsperado  si != null, valida que la pregunta sea de ese profesor
+ * @returns {Promise<boolean>} true si se actualizó, false si no encontró o no tiene permiso
+ */
+async function editarPreguntaConAlternativas(preguntaId, p, creadoPorEsperado) {
+    const pool = db.getPool("auris");
+    const tx = new db.sql.Transaction(pool);
+    await tx.begin();
+    try {
+        // Verificación de propiedad (RF-67)
+        const reqCheck = new db.sql.Request(tx);
+        const rCheck = await reqCheck
+            .input("pregunta_id", db.sql.BigInt, preguntaId)
+            .query(`
+                SELECT creado_por, activo FROM auris.pregunta
+                WHERE pregunta_id = @pregunta_id;
+            `);
+        if (rCheck.recordset.length === 0 || !rCheck.recordset[0].activo) {
+            await tx.rollback();
+            return { ok: false, reason: "NOT_FOUND" };
+        }
+        if (creadoPorEsperado != null && Number(rCheck.recordset[0].creado_por) !== Number(creadoPorEsperado)) {
+            await tx.rollback();
+            return { ok: false, reason: "FORBIDDEN" };
+        }
+
+        // Actualizar la pregunta
+        const reqP = new db.sql.Request(tx);
+        await reqP
+            .input("pregunta_id", db.sql.BigInt, preguntaId)
+            .input("enunciado", db.sql.NVarChar(2000), p.enunciado)
+            .input("explicacion_clinica", db.sql.NVarChar(4000), p.explicacionClinica)
+            .input("audio_grid_id", db.sql.VarChar(24), p.audioGridId || null)
+            .input("imagen_grid_id", db.sql.VarChar(24), p.imagenGridId || null)
+            .query(`
+                UPDATE auris.pregunta
+                SET    enunciado = @enunciado,
+                       explicacion_clinica = @explicacion_clinica,
+                       audio_grid_id = @audio_grid_id,
+                       imagen_grid_id = @imagen_grid_id
+                WHERE  pregunta_id = @pregunta_id;
+            `);
+
+        // Reemplazar las alternativas (más simple y menos error-prone que diff)
+        // Antes: borrar las que se usaban en tests bloquearía por FK. Aquí solo
+        // borramos las alternativas (cascade no aplica). Si una alternativa
+        // está referenciada por respuesta_pregunta, mejor NO borrar el row,
+        // solo actualizar; pero como las respuestas guardan alternativa_intento*_id
+        // sí podría romper FK. Por simplicidad: si hay respuestas, conservamos
+        // las viejas y agregamos las nuevas no usadas. Implementación segura:
+        // - DELETE solo de alternativas que NO están referenciadas por respuestas
+        const reqDel = new db.sql.Request(tx);
+        await reqDel
+            .input("pregunta_id", db.sql.BigInt, preguntaId)
+            .query(`
+                DELETE FROM auris.alternativa
+                WHERE pregunta_id = @pregunta_id
+                  AND alternativa_id NOT IN (
+                      SELECT alternativa_intento1_id FROM auris.respuesta_pregunta
+                        WHERE alternativa_intento1_id IS NOT NULL
+                      UNION
+                      SELECT alternativa_intento2_id FROM auris.respuesta_pregunta
+                        WHERE alternativa_intento2_id IS NOT NULL
+                  );
+            `);
+
+        // Insertar nuevas alternativas con orden re-numerado a partir del MAX existente
+        const reqMax = new db.sql.Request(tx);
+        const rMax = await reqMax
+            .input("pregunta_id", db.sql.BigInt, preguntaId)
+            .query(`
+                SELECT ISNULL(MAX(orden), 0) AS max_orden
+                FROM   auris.alternativa
+                WHERE  pregunta_id = @pregunta_id;
+            `);
+        let nextOrden = (rMax.recordset[0].max_orden || 0) + 1;
+
+        // Primero limpiamos la marca de correcta de las viejas que sobrevivieron
+        const reqClearOk = new db.sql.Request(tx);
+        await reqClearOk
+            .input("pregunta_id", db.sql.BigInt, preguntaId)
+            .query(`
+                UPDATE auris.alternativa
+                SET    es_correcta = 0
+                WHERE  pregunta_id = @pregunta_id;
+            `);
+
+        for (const alt of p.alternativas) {
+            const reqA = new db.sql.Request(tx);
+            await reqA
+                .input("pregunta_id", db.sql.BigInt, preguntaId)
+                .input("texto", db.sql.NVarChar(1000), alt.texto)
+                .input("es_correcta", db.sql.Bit, alt.esCorrecta ? 1 : 0)
+                .input("orden", db.sql.TinyInt, nextOrden++)
+                .query(`
+                    INSERT INTO auris.alternativa
+                        (pregunta_id, texto, es_correcta, orden)
+                    VALUES (@pregunta_id, @texto, @es_correcta, @orden);
+                `);
+        }
+
+        await tx.commit();
+        return { ok: true };
+    } catch (e) {
+        logger.log(`${TAG_ERR} editarPreguntaConAlternativas rollback: ${e.message}`, e);
+        try { await tx.rollback(); } catch (_) {}
+        throw e;
+    }
+}
+
+/**
+ * Soft delete (RF-68): marca activo=0. Conserva la pregunta para mantener
+ * integridad de respuestas previas en evaluaciones ya realizadas.
+ *
+ * @param {number} preguntaId
+ * @param {number|null} creadoPorEsperado  validación de propiedad
+ * @returns {Promise<{ok:boolean, reason?:string}>}
+ */
+async function eliminarPregunta(preguntaId, creadoPorEsperado) {
+    const pool = db.getPool("auris");
+
+    const rCheck = await pool
+        .request()
+        .input("pregunta_id", db.sql.BigInt, preguntaId)
+        .query(`
+            SELECT creado_por, activo FROM auris.pregunta
+            WHERE pregunta_id = @pregunta_id;
+        `);
+    if (rCheck.recordset.length === 0) return { ok: false, reason: "NOT_FOUND" };
+    if (!rCheck.recordset[0].activo) return { ok: false, reason: "ALREADY_INACTIVE" };
+    if (creadoPorEsperado != null && Number(rCheck.recordset[0].creado_por) !== Number(creadoPorEsperado)) {
+        return { ok: false, reason: "FORBIDDEN" };
+    }
+
+    await pool
+        .request()
+        .input("pregunta_id", db.sql.BigInt, preguntaId)
+        .query(`
+            UPDATE auris.pregunta SET activo = 0
+            WHERE pregunta_id = @pregunta_id;
+        `);
+    return { ok: true };
 }
 
 /**
@@ -133,8 +284,99 @@ async function obtenerConAlternativas(preguntaId) {
     return pregunta;
 }
 
+/**
+ * Vincula una pregunta a un test en la tabla test_pregunta.
+ * El orden se calcula como MAX(orden) + 1 dentro de ese test.
+ *
+ * @returns {Promise<number>} el orden asignado
+ */
+async function vincularATest(preguntaId, testId) {
+    const pool = db.getPool("auris");
+    const tx = new db.sql.Transaction(pool);
+    await tx.begin();
+    try {
+        const reqMax = new db.sql.Request(tx);
+        const rMax = await reqMax
+            .input("test_id", db.sql.BigInt, testId)
+            .query(`
+                SELECT ISNULL(MAX(orden), 0) AS max_orden
+                FROM   auris.test_pregunta
+                WHERE  test_id = @test_id;
+            `);
+        const nuevoOrden = (rMax.recordset[0].max_orden || 0) + 1;
+
+        const reqIns = new db.sql.Request(tx);
+        await reqIns
+            .input("test_id", db.sql.BigInt, testId)
+            .input("pregunta_id", db.sql.BigInt, preguntaId)
+            .input("orden", db.sql.SmallInt, nuevoOrden)
+            .query(`
+                INSERT INTO auris.test_pregunta (test_id, pregunta_id, orden)
+                VALUES (@test_id, @pregunta_id, @orden);
+            `);
+
+        await tx.commit();
+        return nuevoOrden;
+    } catch (e) {
+        logger.log(`${TAG_ERR} vincularATest rollback: ${e.message}`, e);
+        try { await tx.rollback(); } catch (_) {}
+        throw e;
+    }
+}
+
+/**
+ * Desvincula una pregunta de un test.
+ * Si la pregunta queda huérfana (no está en ningún test) y no tiene
+ * respuestas registradas, hacemos soft-delete para que no quede basura
+ * en el banco invisible.
+ */
+async function desvincularDeTest(preguntaId, testId) {
+    const pool = db.getPool("auris");
+
+    // 1) Borrar del junction
+    await pool
+        .request()
+        .input("test_id", db.sql.BigInt, testId)
+        .input("pregunta_id", db.sql.BigInt, preguntaId)
+        .query(`
+            DELETE FROM auris.test_pregunta
+            WHERE  test_id = @test_id
+              AND  pregunta_id = @pregunta_id;
+        `);
+
+    // 2) ¿Quedó huérfana?
+    const r = await pool
+        .request()
+        .input("pregunta_id", db.sql.BigInt, preguntaId)
+        .query(`
+            SELECT
+                (SELECT COUNT(*) FROM auris.test_pregunta tp
+                  WHERE tp.pregunta_id = @pregunta_id) AS en_tests,
+                (SELECT COUNT(*) FROM auris.respuesta_pregunta rp
+                  WHERE rp.pregunta_id = @pregunta_id) AS respuestas;
+        `);
+    const { en_tests, respuestas } = r.recordset[0];
+
+    // Si no está en ningún test y nunca se respondió, soft-delete
+    if (en_tests === 0 && respuestas === 0) {
+        await pool
+            .request()
+            .input("pregunta_id", db.sql.BigInt, preguntaId)
+            .query(`
+                UPDATE auris.pregunta SET activo = 0
+                WHERE pregunta_id = @pregunta_id;
+            `);
+        return { huerfanaEliminada: true };
+    }
+    return { huerfanaEliminada: false };
+}
+
 module.exports = {
     crearPreguntaConAlternativas,
     listarPorProfesor,
     obtenerConAlternativas,
+    editarPreguntaConAlternativas,
+    eliminarPregunta,
+    vincularATest,
+    desvincularDeTest,
 };

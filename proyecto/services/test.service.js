@@ -26,9 +26,13 @@ function _leerArg(request) {
 }
 
 function _validarComposicion(preguntas) {
-    if (!Array.isArray(preguntas) || preguntas.length === 0) {
-        return "El test debe incluir al menos 1 pregunta";
+    // Test vacío permitido: el profesor agrega preguntas después en test-detalle.
+    if (preguntas == null) return null;
+    if (!Array.isArray(preguntas)) {
+        return "preguntas debe ser un arreglo (o se omite)";
     }
+    if (preguntas.length === 0) return null;
+
     const ordenes = new Set();
     const ids = new Set();
     for (let i = 0; i < preguntas.length; i++) {
@@ -71,16 +75,20 @@ async function crear(request, response) {
             return response.json(reply.error(errComp));
         }
 
-        const ids = b.preguntas.map((p) => p.preguntaId);
-        const encontradas = await testRepo.existenPreguntas(ids);
-        if (encontradas.length !== ids.length) {
-            const faltantes = ids.filter((id) => !encontradas.includes(id));
-            logger.log(`${TAG} crear: preguntas inexistentes/inactivas — [${faltantes.join(", ")}]`);
-            return response.json(
-                reply.error(
-                    `Preguntas inexistentes o inactivas: ${faltantes.join(", ")}`
-                )
-            );
+        const preguntasInput = Array.isArray(b.preguntas) ? b.preguntas : [];
+
+        if (preguntasInput.length > 0) {
+            const ids = preguntasInput.map((p) => p.preguntaId);
+            const encontradas = await testRepo.existenPreguntas(ids);
+            if (encontradas.length !== ids.length) {
+                const faltantes = ids.filter((id) => !encontradas.includes(id));
+                logger.log(`${TAG} crear: preguntas inexistentes/inactivas — [${faltantes.join(", ")}]`);
+                return response.json(
+                    reply.error(
+                        `Preguntas inexistentes o inactivas: ${faltantes.join(", ")}`
+                    )
+                );
+            }
         }
 
         const testId = await testRepo.crearTestConPreguntas({
@@ -89,7 +97,7 @@ async function crear(request, response) {
             ordenAleatorio: b.ordenAleatorio === true,
             creadoPor: creadoPor,
             cursoOrigenId: b.cursoOrigenId ? Number(b.cursoOrigenId) : null,
-            preguntas: b.preguntas.map((p) => ({
+            preguntas: preguntasInput.map((p) => ({
                 preguntaId: p.preguntaId,
                 orden: p.orden,
             })),

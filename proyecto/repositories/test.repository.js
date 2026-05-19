@@ -93,7 +93,9 @@ async function listarPorProfesor(profesorId) {
 }
 
 /**
- * Devuelve un test con sus preguntas (sólo metadata + ids).
+ * Devuelve un test con sus preguntas (incluye alternativas completas).
+ * Usado por la página test-detalle para gestionar las preguntas dentro
+ * del test.
  */
 async function obtenerConPreguntas(testId) {
     const pool = db.getPool("auris");
@@ -116,10 +118,16 @@ async function obtenerConPreguntas(testId) {
         .query(`
             SELECT  tp.pregunta_id,
                     tp.orden,
-                    p.enunciado
+                    p.enunciado,
+                    p.explicacion_clinica,
+                    p.audio_grid_id,
+                    p.imagen_grid_id,
+                    (SELECT COUNT(*) FROM auris.alternativa a
+                      WHERE a.pregunta_id = p.pregunta_id) AS cantidad_alternativas
             FROM    auris.test_pregunta tp
             JOIN    auris.pregunta p ON p.pregunta_id = tp.pregunta_id
             WHERE   tp.test_id = @test_id
+              AND   p.activo = 1
             ORDER BY tp.orden;
         `);
 
