@@ -1,0 +1,50 @@
+"use strict";
+
+/**
+ * Plantilla para crear tu propio env/local.js
+ *
+ * INSTRUCCIONES:
+ *   1. Copia este archivo a env/local.js   (cp env/local.js.example env/local.js)
+ *   2. Edita las credenciales según tu entorno local
+ *   3. NO lo subas al repo — ya está en .gitignore
+ *
+ * Lo que pongas aquí sobreescribe lo que esté en env/development.js
+ * cuando arrancas con `npm run start` o `npm run dev-unix`.
+ */
+module.exports = {
+    localDatabases: [
+        {
+            code: "auris",
+            server: "localhost",
+            port: 1433,
+            user: "sa",
+            password: "TU_PASSWORD_DE_SQLSERVER_AQUI",   // <-- cambia esto
+            database: "AurisDB",
+            options: {
+                encrypt: true,
+                trustServerCertificate: true,
+            },
+            pool: { max: 10, min: 0, idleTimeoutMillis: 30000 },
+        },
+    ],
+    security: {
+        jwtSecret: "AURIS_LOCAL_DEV_SECRET_CHANGE_ME",   // debe coincidir con el del controlador
+        jwtAccessExpiresIn: "8h",
+        jwtRefreshExpiresIn: "7d",
+        bcryptRounds: 12,
+        loginBlockMaxAttempts: 5,
+        loginBlockWindowMinutes: 15,
+    },
+    mail: {
+        mode: "dev",                                     // "dev" | "smtp"
+        from: "Auris <no-reply@auris.local>",
+    },
+    frontend: {
+        // El puerto donde corre tu frontend (ng serve = 4200 por defecto).
+        // Verifica el puerto real en el output de `npm start` del frontend.
+        baseUrl: "http://localhost:4200",
+    },
+    invitaciones: {
+        expiraHoras: 24,
+    },
+};

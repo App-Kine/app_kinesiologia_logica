@@ -6,6 +6,7 @@ var methodOverride = require("method-override");
 global.logger = require("./base/utils/logConsola");
 
 var loadConfig = require("./base/utils/loadConfig");
+var db = require("./base/utils/db");
 var infoApp = require("./package.json");
 var { rootPath, largeEntity } = require("./config").app;
 
@@ -77,6 +78,15 @@ let setConfig = async () => {
     }
 };
 
+let setDatabases = async () => {
+    try {
+        await db.initialize();
+        logger.log(`\x1b[36m[${infoApp.name}]\x1b[0m Databases: listo`);
+    } catch (e) {
+        throw { msgs: "Error inicializar bases de datos", error: e };
+    }
+};
+
 let setRouters = (module) => {
     try {
         switch (module) {
@@ -119,6 +129,7 @@ let initApp = async () => {
         setRequestLargeEntity();
         configCORS();
         await setConfig();
+        await setDatabases();
         setRouters("base");
         setRouters("proyecto");
         launchApp();
