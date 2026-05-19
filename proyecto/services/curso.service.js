@@ -136,9 +136,145 @@ async function listarDelProfesor(request, response) {
     }
 }
 
+/**
+ * POST /<rootPath>/cursos/crear  body.arg = { codigo, nombre, descripcion?, creadoPor }
+ * Crea un curso y asigna al profesor automáticamente como su creador y profesor activo.
+ *
+ * Nota sobre el SRS: RF-74 originalmente asignaba esta acción al superadmin.
+ * La extensión es intencional: en este flujo el profesor puede armar sus propios cursos.
+ */
+async function crear(request, response) {
+    const b = _leerArg(request);
+    const codigo = (b.codigo || "").trim();
+    const nombre = (b.nombre || "").trim();
+    const descripcion = b.descripcion ? String(b.descripcion).trim() : null;
+    const creadoPor = Number(b.creadoPor);
+    logger.log(`${TAG} crear: codigo="${codigo}" nombre="${nombre}" creadoPor=${creadoPor}`);
+    try {
+        if (!codigo) return response.json(reply.error("código requerido"));
+        if (!nombre) return response.json(reply.error("nombre requerido"));
+        if (!Number.isInteger(creadoPor) || creadoPor <= 0)
+            return response.json(reply.error("creadoPor (usuario_id) requerido"));
+
+        const pool = db.getPool("auris");
+
+        // Validar que el código no esté duplicado
+        const rCheck = await pool
+            .request()
+            .input("codigo", db.sql.VarChar(40), codigo)
+            .query(`SELECT curso_id FROM auris.curso WHERE codigo = @codigo;`);
+        if (rCheck.recordset.length > 0) {
+            return response.json(reply.error(`Ya existe un curso con código "${codigo}"`));
+        }
+
+        const tx = new db.sql.Transaction(pool);
+        await tx.begin();
+        try {
+            // INSERT curso
+            const reqC = new db.sql.Request(tx);
+            const rC = await reqC
+                .input("codigo", db.sql.VarChar(40), codigo)
+                .input("nombre", db.sql.NVarChar(160), nombre)
+                .input("descripcion", db.sql.NVarChar(1000), descripcion)
+                .input("creado_por", db.sql.BigInt, creadoPor)
+                .query(`
+                    INSERT INTO auris.curso (codigo, nombre, descripcion, activo, creado_por)
+                    OUTPUT INSERTED.curso_id
+                    VALUES (@codigo, @nombre, @descripcion, 1, @creado_por);
+                `);
+            const cursoId = rC.recordset[0].curso_id;
+
+            // Asignar al profesor en profesor_curso (self-assigned)
+            const reqA = new db.sql.Request(tx);
+            await reqA
+                .input("usuario_id", db.sql.BigInt, creadoPor)
+                .input("curso_id", db.sql.BigInt, cursoId)
+                .input("asignado_por", db.sql.BigInt, creadoPor)
+                .query(`
+                    INSERT INTO auris.profesor_curso
+                        (usuario_id, curso_id, asignado_por, activo)
+                    VALUES (@usuario_id, @curso_id, @asignado_por, 1);
+                `);
+
+            await tx.commit();
+            logger.log(`${TAG} crear: OK curso_id=${cursoId}`);
+            response.json(reply.ok({ curso_id: cursoId }));
+        } catch (e) {
+            try { await tx.rollback(); } catch (_) {}
+            throw e;
+        }
+    } catch (e) {
+        logger.log(`${TAG_ERR} crear: ${e.message}`, e);
+        response.json(reply.fatal(e));
+    }
+}
+
+/**
+ * POST /<rootPath>/cursos/obtener  body.arg = { cursoId }
+ * Devuelve un curso + lista de aplicaciones de test que tiene.
+ * Cada aplicación trae el nombre del test, profesor y conteo de preguntas.
+ */
+async function obtenerConAplicaciones(request, response) {
+    const b = _leerArg(request);
+    const cursoId = Number(b.cursoId);
+    logger.log(`${TAG} obtenerConAplicaciones: cursoId=${cursoId}`);
+    try {
+        if (!Number.isInteger(cursoId) || cursoId <= 0)
+            return response.json(reply.error("cursoId requerido"));
+
+        const pool = db.getPool("auris");
+
+        const rCurso = await pool
+            .request()
+            .input("curso_id", db.sql.BigInt, cursoId)
+            .query(`
+                SELECT  curso_id, codigo, nombre, descripcion,
+                        activo, creado_por, created_at, updated_at
+                FROM    auris.curso
+                WHERE   curso_id = @curso_id;
+            `);
+        if (rCurso.recordset.length === 0) {
+            return response.json(reply.error("Curso no encontrado"));
+        }
+
+        const rApls = await pool
+            .request()
+            .input("curso_id", db.sql.BigInt, cursoId)
+            .query(`
+                SELECT  apl.aplicacion_id,
+                        apl.aplicacion_uuid,
+                        apl.test_id,
+                        t.nombre  AS test_nombre,
+                        (SELECT COUNT(*) FROM auris.test_pregunta tp
+                           WHERE tp.test_id = t.test_id) AS cantidad_preguntas,
+                        apl.profesor_id,
+                        u.nombre  AS profesor_nombre,
+                        apl.activo,
+                        apl.visible_desde,
+                        apl.visible_hasta,
+                        apl.created_at
+                FROM    auris.aplicacion_test apl
+                JOIN    auris.test t ON t.test_id = apl.test_id
+                LEFT JOIN auris.usuario u ON u.usuario_id = apl.profesor_id
+                WHERE   apl.curso_id = @curso_id
+                ORDER BY apl.created_at DESC;
+            `);
+
+        const curso = rCurso.recordset[0];
+        curso.aplicaciones = rApls.recordset;
+        logger.log(`${TAG} obtenerConAplicaciones: OK (${rApls.recordset.length} aplicaciones)`);
+        response.json(reply.ok(curso));
+    } catch (e) {
+        logger.log(`${TAG_ERR} obtenerConAplicaciones: ${e.message}`, e);
+        response.json(reply.fatal(e));
+    }
+}
+
 module.exports = {
     listarActivos,
     detalle,
     ping,
     listarDelProfesor,
+    crear,
+    obtenerConAplicaciones,
 };
