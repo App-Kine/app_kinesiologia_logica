@@ -1,0 +1,133 @@
+"use strict";
+
+/**
+ * Service de aplicaciones de test (módulo docente).
+ * Cubre RF-71, RF-72, RF-88 a RF-93.
+ *
+ * RF-71: el profesor solo puede aplicar tests a cursos donde está asignado.
+ * Verificación contra auris.profesor_curso. Si es superadmin esta
+ * restricción podría relajarse — TODO cuando exista el middleware de rol.
+ *
+ * TODO(auth): obtener `profesorId` desde `request.usuario.usuario_id`
+ * en vez del body cuando el middleware JWT (RNF-19) esté en su lugar.
+ */
+
+var reply = require("../../base/utils/reply");
+var aplicacionRepo = require("../repositories/aplicacion.repository");
+
+const TAG = "\x1b[36m[aplicacion]\x1b[0m";
+const TAG_ERR = "\x1b[31m[aplicacion]\x1b[0m";
+
+function _leerArg(request) {
+    try {
+        if (request.body && typeof request.body.arg === "string") {
+            return JSON.parse(request.body.arg);
+        }
+        return request.body || {};
+    } catch (e) {
+        return {};
+    }
+}
+
+async function crear(request, response) {
+    const b = _leerArg(request);
+    const testId = Number(b.testId);
+    const cursoId = Number(b.cursoId);
+    const profesorId = Number(b.profesorId);
+    logger.log(`${TAG} crear: test=${b.testId}→${testId} curso=${b.cursoId}→${cursoId} prof=${b.profesorId}→${profesorId}`);
+    try {
+        if (!Number.isInteger(testId) || testId <= 0) {
+            logger.log(`${TAG} crear: validación falló — testId inválido`);
+            return response.json(reply.error("testId requerido"));
+        }
+        if (!Number.isInteger(cursoId) || cursoId <= 0) {
+            logger.log(`${TAG} crear: validación falló — cursoId inválido`);
+            return response.json(reply.error("cursoId requerido"));
+        }
+        if (!Number.isInteger(profesorId) || profesorId <= 0) {
+            logger.log(`${TAG} crear: validación falló — profesorId inválido`);
+            return response.json(reply.error("profesorId requerido"));
+        }
+
+        const autorizado = await aplicacionRepo.profesorPerteneceACurso(
+            profesorId,
+            cursoId
+        );
+        if (!autorizado) {
+            logger.log(`${TAG} crear: NO AUTORIZADO prof=${profesorId} curso=${cursoId} (RF-71)`);
+            return response.json(
+                reply.error(
+                    "El profesor no está asignado a este curso (RF-71)"
+                )
+            );
+        }
+
+        try {
+            const data = await aplicacionRepo.crearAplicacion(
+                testId,
+                cursoId,
+                profesorId
+            );
+            logger.log(`${TAG} crear: OK aplicacion_id=${data.aplicacion_id} uuid=${data.aplicacion_uuid}`);
+            response.json(reply.ok(data));
+        } catch (e) {
+            if (e.code === "DUPLICATE") {
+                logger.log(`${TAG} crear: DUPLICADO test=${testId} curso=${cursoId}`);
+                return response.json(reply.error(e.message));
+            }
+            throw e;
+        }
+    } catch (e) {
+        logger.log(`${TAG_ERR} crear: ${e.message}`, e);
+        response.json(reply.fatal(e));
+    }
+}
+
+async function listar(request, response) {
+    const b = _leerArg(request);
+    const cp = Number(b.profesorId);
+    const cc = Number(b.cursoId);
+    const profesorId = Number.isInteger(cp) && cp > 0 ? cp : null;
+    const cursoId = Number.isInteger(cc) && cc > 0 ? cc : null;
+    logger.log(`${TAG} listar: profesorId=${profesorId || 'todos'} cursoId=${cursoId || 'todos'}`);
+    try {
+        const data = await aplicacionRepo.listarPorProfesor(profesorId, cursoId);
+        logger.log(`${TAG} listar: OK (${data.length} filas)`);
+        response.json(reply.ok(data));
+    } catch (e) {
+        logger.log(`${TAG_ERR} listar: ${e.message}`, e);
+        response.json(reply.fatal(e));
+    }
+}
+
+async function setActivo(request, response) {
+    const b = _leerArg(request);
+    const aplicacionId = Number(b.aplicacionId);
+    logger.log(`${TAG} setActivo: id=${b.aplicacionId} coerced=${aplicacionId} activo=${b.activo}`);
+    try {
+        if (!Number.isInteger(aplicacionId) || aplicacionId <= 0) {
+            logger.log(`${TAG} setActivo: validación falló — aplicacionId inválido`);
+            return response.json(reply.error("aplicacionId requerido"));
+        }
+        if (typeof b.activo !== "boolean") {
+            logger.log(`${TAG} setActivo: validación falló — activo no booleano`);
+            return response.json(reply.error("activo (boolean) requerido"));
+        }
+        const ok = await aplicacionRepo.setActivo(aplicacionId, b.activo);
+        if (!ok) {
+            logger.log(`${TAG} setActivo: no encontrada (id=${aplicacionId})`);
+            return response.json(reply.error("Aplicación no encontrada"));
+        }
+        logger.log(`${TAG} setActivo: OK id=${aplicacionId}`);
+        response.json(reply.ok({ aplicacion_id: aplicacionId, activo: b.activo }));
+    } catch (e) {
+        logger.log(`${TAG_ERR} setActivo: ${e.message}`, e);
+        response.json(reply.fatal(e));
+    }
+}
+
+module.exports = {
+    crear,
+    listar,
+    setActivo,
+};

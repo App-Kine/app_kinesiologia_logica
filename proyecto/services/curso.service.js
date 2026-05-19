@@ -8,6 +8,20 @@
 var reply = require("../../base/utils/reply");
 var db = require("../../base/utils/db");
 
+const TAG = "\x1b[36m[curso]\x1b[0m";
+const TAG_ERR = "\x1b[31m[curso]\x1b[0m";
+
+function _leerArg(request) {
+    try {
+        if (request.body && typeof request.body.arg === "string") {
+            return JSON.parse(request.body.arg);
+        }
+        return request.body || {};
+    } catch (e) {
+        return {};
+    }
+}
+
 /**
  * GET equivalente: POST /<rootPath>/cursos/listar
  * Lista los cursos activos visibles al estudiante (RF-02).
@@ -85,8 +99,46 @@ async function ping(request, response) {
     }
 }
 
+/**
+ * POST /<rootPath>/cursos/misCursos  body: { profesorId }
+ * Devuelve los cursos donde el profesor está asignado activamente (RF-61).
+ */
+async function listarDelProfesor(request, response) {
+    const b = _leerArg(request);
+    const profesorId = Number(b.profesorId);
+    logger.log(`${TAG} listarDelProfesor: profesorId=${b.profesorId} coerced=${profesorId}`);
+    try {
+        if (!Number.isInteger(profesorId) || profesorId <= 0) {
+            logger.log(`${TAG} listarDelProfesor: validación falló — profesorId inválido`);
+            return response.json(reply.error("profesorId requerido"));
+        }
+        const r = await db
+            .request("auris")
+            .input("profesor_id", db.sql.BigInt, profesorId)
+            .query(`
+                SELECT  c.curso_id,
+                        c.codigo,
+                        c.nombre,
+                        c.descripcion
+                FROM    auris.curso c
+                JOIN    auris.profesor_curso pc
+                          ON pc.curso_id = c.curso_id
+                WHERE   pc.usuario_id = @profesor_id
+                  AND   pc.activo = 1
+                  AND   c.activo = 1
+                ORDER BY c.codigo;
+            `);
+        logger.log(`${TAG} listarDelProfesor: OK (${r.recordset.length} filas)`);
+        response.json(reply.ok(r.recordset));
+    } catch (e) {
+        logger.log(`${TAG_ERR} listarDelProfesor: ${e.message}`, e);
+        response.json(reply.fatal(e));
+    }
+}
+
 module.exports = {
     listarActivos,
     detalle,
     ping,
+    listarDelProfesor,
 };
