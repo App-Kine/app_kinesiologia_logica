@@ -126,8 +126,57 @@ async function setActivo(request, response) {
     }
 }
 
+/**
+ * POST /<rootPath>/eliminarAplicacion  body.arg = { aplicacionId }
+ * Borra la aplicación. Si tiene evaluaciones registradas, falla por FK y
+ * sugerimos usar setActivo(false) en su lugar.
+ */
+var db = require("../../base/utils/db");
+async function eliminar(request, response) {
+    const b = _leerArg(request);
+    const aplicacionId = Number(b.aplicacionId);
+    logger.log(`${TAG} eliminar: id=${aplicacionId}`);
+    try {
+        if (!Number.isInteger(aplicacionId) || aplicacionId <= 0)
+            return response.json(reply.error("aplicacionId requerido"));
+
+        const pool = db.getPool("auris");
+        // Verificar que no haya evaluaciones asociadas
+        const rEval = await pool
+            .request()
+            .input("aplicacion_id", db.sql.BigInt, aplicacionId)
+            .query(`
+                SELECT COUNT(*) AS total
+                FROM   auris.evaluacion
+                WHERE  aplicacion_id = @aplicacion_id;
+            `);
+        if (rEval.recordset[0].total > 0) {
+            return response.json(reply.error(
+                `No se puede eliminar: hay ${rEval.recordset[0].total} evaluación(es) asociada(s). Usa "desactivar" para ocultarla a los estudiantes.`
+            ));
+        }
+
+        const rDel = await pool
+            .request()
+            .input("aplicacion_id", db.sql.BigInt, aplicacionId)
+            .query(`
+                DELETE FROM auris.aplicacion_test
+                WHERE aplicacion_id = @aplicacion_id;
+            `);
+        if (rDel.rowsAffected[0] === 0)
+            return response.json(reply.error("Aplicación no encontrada"));
+
+        logger.log(`${TAG} eliminar: OK id=${aplicacionId}`);
+        response.json(reply.ok({ aplicacion_id: aplicacionId }));
+    } catch (e) {
+        logger.log(`${TAG_ERR} eliminar: ${e.message}`, e);
+        response.json(reply.fatal(e));
+    }
+}
+
 module.exports = {
     crear,
     listar,
     setActivo,
+    eliminar,
 };

@@ -49,4 +49,8 @@ module.exports = {
     invitaciones: {
         expiraHoras: parseInt(process.env.INVITACION_EXPIRA_HORAS || "24", 10),
     },
+    mongo: {
+        uri: process.env.MONGO_URI || "",
+        database: process.env.MONGO_DB || "auris_media",
+    },
 };

@@ -40,6 +40,7 @@ var setEnvironment = async (env) => {
         mail: preConfig.mail || { mode: "dev" },
         frontend: preConfig.frontend || { baseUrl: "" },
         invitaciones: preConfig.invitaciones || { expiraHoras: 24 },
+        mongo: preConfig.mongo || null,
     };
 
     return { newConfig: newConfig, preConfig: preConfig };

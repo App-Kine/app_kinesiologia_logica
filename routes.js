@@ -13,5 +13,7 @@ module.exports = (app, rootPath) => {
     app.use(`/${rootPath}/`, require("./proyecto/routes/pregunta.router"));
     app.use(`/${rootPath}/`, require("./proyecto/routes/test.router"));
     app.use(`/${rootPath}/`, require("./proyecto/routes/aplicacion.router"));
+    app.use(`/${rootPath}/`, require("./proyecto/routes/analitica.router"));
+    app.use(`/${rootPath}/`, require("./proyecto/routes/multimedia.router"));
 
 };

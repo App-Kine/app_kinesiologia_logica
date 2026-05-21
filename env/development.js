@@ -45,4 +45,9 @@ module.exports = {
     invitaciones: {
         expiraHoras: 24,
     },
+    mongo: {
+        // Multimedia GridFS. Define tu URI real en env/local.js (gitignored).
+        uri: "mongodb://localhost:27017",
+        database: "auris_media",
+    },
 };

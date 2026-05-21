@@ -9,6 +9,7 @@
  */
 
 var reply = require("../../base/utils/reply");
+var db = require("../../base/utils/db");
 var testRepo = require("../repositories/test.repository");
 
 const TAG = "\x1b[36m[test]\x1b[0m";
@@ -148,8 +149,110 @@ async function obtener(request, response) {
     }
 }
 
+/**
+ * POST /<rootPath>/editarTest  body.arg = { testId, nombre, descripcion?, ordenAleatorio, creadoPor }
+ * Solo el creador del test puede editarlo. Edita los datos básicos
+ * (las preguntas se gestionan aparte en test-detalle).
+ */
+async function editar(request, response) {
+    const b = _leerArg(request);
+    const testId = Number(b.testId);
+    const nombre = (b.nombre || "").trim();
+    const descripcion = b.descripcion ? String(b.descripcion).trim() : null;
+    const ordenAleatorio = b.ordenAleatorio === true;
+    const creadoPor = Number(b.creadoPor);
+    logger.log(`${TAG} editar: testId=${testId} creadoPor=${creadoPor}`);
+    try {
+        if (!Number.isInteger(testId) || testId <= 0)
+            return response.json(reply.error("testId requerido"));
+        if (!nombre) return response.json(reply.error("nombre requerido"));
+
+        const pool = db.getPool("auris");
+        const rCheck = await pool
+            .request()
+            .input("test_id", db.sql.BigInt, testId)
+            .query(`
+                SELECT creado_por, activo FROM auris.test
+                WHERE test_id = @test_id;
+            `);
+        if (rCheck.recordset.length === 0)
+            return response.json(reply.error("Test no encontrado"));
+        if (!rCheck.recordset[0].activo)
+            return response.json(reply.error("El test está inactivo"));
+        if (Number(rCheck.recordset[0].creado_por) !== creadoPor)
+            return response.json(reply.error("Solo el creador puede editar este test"));
+
+        await pool
+            .request()
+            .input("test_id", db.sql.BigInt, testId)
+            .input("nombre", db.sql.NVarChar(200), nombre)
+            .input("descripcion", db.sql.NVarChar(1000), descripcion)
+            .input("orden_aleatorio", db.sql.Bit, ordenAleatorio ? 1 : 0)
+            .query(`
+                UPDATE auris.test
+                SET    nombre = @nombre,
+                       descripcion = @descripcion,
+                       orden_aleatorio = @orden_aleatorio
+                WHERE  test_id = @test_id;
+            `);
+
+        logger.log(`${TAG} editar: OK testId=${testId}`);
+        response.json(reply.ok({ test_id: testId }));
+    } catch (e) {
+        logger.log(`${TAG_ERR} editar: ${e.message}`, e);
+        response.json(reply.fatal(e));
+    }
+}
+
+/**
+ * POST /<rootPath>/eliminarTest  body.arg = { testId, creadoPor }
+ * Soft-delete del test (activo=0). Conserva históricos (aplicaciones,
+ * evaluaciones). Las listas filtran por activo=1.
+ */
+async function eliminar(request, response) {
+    const b = _leerArg(request);
+    const testId = Number(b.testId);
+    const creadoPor = Number(b.creadoPor);
+    logger.log(`${TAG} eliminar: testId=${testId} creadoPor=${creadoPor}`);
+    try {
+        if (!Number.isInteger(testId) || testId <= 0)
+            return response.json(reply.error("testId requerido"));
+
+        const pool = db.getPool("auris");
+        const rCheck = await pool
+            .request()
+            .input("test_id", db.sql.BigInt, testId)
+            .query(`
+                SELECT creado_por, activo FROM auris.test
+                WHERE test_id = @test_id;
+            `);
+        if (rCheck.recordset.length === 0)
+            return response.json(reply.error("Test no encontrado"));
+        if (!rCheck.recordset[0].activo)
+            return response.json(reply.error("El test ya estaba eliminado"));
+        if (Number(rCheck.recordset[0].creado_por) !== creadoPor)
+            return response.json(reply.error("Solo el creador puede eliminar este test"));
+
+        await pool
+            .request()
+            .input("test_id", db.sql.BigInt, testId)
+            .query(`
+                UPDATE auris.test SET activo = 0
+                WHERE test_id = @test_id;
+            `);
+
+        logger.log(`${TAG} eliminar: OK testId=${testId}`);
+        response.json(reply.ok({ test_id: testId }));
+    } catch (e) {
+        logger.log(`${TAG_ERR} eliminar: ${e.message}`, e);
+        response.json(reply.fatal(e));
+    }
+}
+
 module.exports = {
     crear,
     listar,
     obtener,
+    editar,
+    eliminar,
 };

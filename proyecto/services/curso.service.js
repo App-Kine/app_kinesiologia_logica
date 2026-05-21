@@ -270,6 +270,121 @@ async function obtenerConAplicaciones(request, response) {
     }
 }
 
+/**
+ * POST /<rootPath>/cursos/editar  body.arg = { cursoId, codigo, nombre, descripcion?, creadoPor }
+ * Solo el creador del curso puede editarlo.
+ */
+async function editar(request, response) {
+    const b = _leerArg(request);
+    const cursoId = Number(b.cursoId);
+    const codigo = (b.codigo || "").trim();
+    const nombre = (b.nombre || "").trim();
+    const descripcion = b.descripcion ? String(b.descripcion).trim() : null;
+    const creadoPor = Number(b.creadoPor);
+    logger.log(`${TAG} editar: cursoId=${cursoId} creadoPor=${creadoPor}`);
+    try {
+        if (!Number.isInteger(cursoId) || cursoId <= 0)
+            return response.json(reply.error("cursoId requerido"));
+        if (!codigo) return response.json(reply.error("código requerido"));
+        if (!nombre) return response.json(reply.error("nombre requerido"));
+
+        const pool = db.getPool("auris");
+
+        // Verificar propiedad
+        const rCheck = await pool
+            .request()
+            .input("curso_id", db.sql.BigInt, cursoId)
+            .query(`
+                SELECT creado_por, activo, codigo FROM auris.curso
+                WHERE curso_id = @curso_id;
+            `);
+        if (rCheck.recordset.length === 0)
+            return response.json(reply.error("Curso no encontrado"));
+        if (!rCheck.recordset[0].activo)
+            return response.json(reply.error("El curso está inactivo"));
+        if (Number(rCheck.recordset[0].creado_por) !== creadoPor)
+            return response.json(reply.error("Solo el creador puede editar este curso"));
+
+        // Si cambia el código, verificar que no esté ocupado por otro curso
+        if (codigo !== rCheck.recordset[0].codigo) {
+            const rDup = await pool
+                .request()
+                .input("codigo", db.sql.VarChar(40), codigo)
+                .input("curso_id", db.sql.BigInt, cursoId)
+                .query(`
+                    SELECT curso_id FROM auris.curso
+                    WHERE codigo = @codigo AND curso_id <> @curso_id;
+                `);
+            if (rDup.recordset.length > 0)
+                return response.json(reply.error(`Ya existe otro curso con código "${codigo}"`));
+        }
+
+        await pool
+            .request()
+            .input("curso_id", db.sql.BigInt, cursoId)
+            .input("codigo", db.sql.VarChar(40), codigo)
+            .input("nombre", db.sql.NVarChar(160), nombre)
+            .input("descripcion", db.sql.NVarChar(1000), descripcion)
+            .query(`
+                UPDATE auris.curso
+                SET    codigo = @codigo,
+                       nombre = @nombre,
+                       descripcion = @descripcion
+                WHERE  curso_id = @curso_id;
+            `);
+
+        logger.log(`${TAG} editar: OK cursoId=${cursoId}`);
+        response.json(reply.ok({ curso_id: cursoId }));
+    } catch (e) {
+        logger.log(`${TAG_ERR} editar: ${e.message}`, e);
+        response.json(reply.fatal(e));
+    }
+}
+
+/**
+ * POST /<rootPath>/cursos/eliminar  body.arg = { cursoId, creadoPor }
+ * Soft-delete del curso (activo=0). Conserva históricos.
+ */
+async function eliminar(request, response) {
+    const b = _leerArg(request);
+    const cursoId = Number(b.cursoId);
+    const creadoPor = Number(b.creadoPor);
+    logger.log(`${TAG} eliminar: cursoId=${cursoId} creadoPor=${creadoPor}`);
+    try {
+        if (!Number.isInteger(cursoId) || cursoId <= 0)
+            return response.json(reply.error("cursoId requerido"));
+
+        const pool = db.getPool("auris");
+        const rCheck = await pool
+            .request()
+            .input("curso_id", db.sql.BigInt, cursoId)
+            .query(`
+                SELECT creado_por, activo FROM auris.curso
+                WHERE curso_id = @curso_id;
+            `);
+        if (rCheck.recordset.length === 0)
+            return response.json(reply.error("Curso no encontrado"));
+        if (!rCheck.recordset[0].activo)
+            return response.json(reply.error("El curso ya estaba eliminado"));
+        if (Number(rCheck.recordset[0].creado_por) !== creadoPor)
+            return response.json(reply.error("Solo el creador puede eliminar este curso"));
+
+        await pool
+            .request()
+            .input("curso_id", db.sql.BigInt, cursoId)
+            .query(`
+                UPDATE auris.curso SET activo = 0
+                WHERE curso_id = @curso_id;
+            `);
+
+        logger.log(`${TAG} eliminar: OK cursoId=${cursoId}`);
+        response.json(reply.ok({ curso_id: cursoId }));
+    } catch (e) {
+        logger.log(`${TAG_ERR} eliminar: ${e.message}`, e);
+        response.json(reply.fatal(e));
+    }
+}
+
 module.exports = {
     listarActivos,
     detalle,
@@ -277,4 +392,6 @@ module.exports = {
     listarDelProfesor,
     crear,
     obtenerConAplicaciones,
+    editar,
+    eliminar,
 };
