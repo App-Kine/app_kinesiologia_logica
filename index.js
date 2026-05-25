@@ -6,6 +6,8 @@ var methodOverride = require("method-override");
 global.logger = require("./base/utils/logConsola");
 
 var loadConfig = require("./base/utils/loadConfig");
+var db = require("./base/utils/db");
+var mongo = require("./base/utils/mongo");
 var infoApp = require("./package.json");
 var { rootPath, largeEntity } = require("./config").app;
 
@@ -42,6 +44,14 @@ let configCORS = () => {
                 "Origin, X-Requested-With, Content-Type, Accept, Authorization"
             );
 
+            // Preflight CORS: el navegador manda OPTIONS antes de un POST con
+            // header Authorization (como la subida de multimedia). Hay que
+            // responder 204 aquí; si dejamos pasar el OPTIONS, no hace match con
+            // la ruta POST y cae en 404 → el navegador bloquea (status 0).
+            if (req.method === "OPTIONS") {
+                return res.sendStatus(204);
+            }
+
             let oldSend = res.send;
 
             res.send = function (data) {
@@ -74,6 +84,28 @@ let setConfig = async () => {
         logger.log(`\x1b[36m[${infoApp.name}]\x1b[0m Config: listo`);
     } catch (e) {
         throw { msgs: "Error carga config/envConfig", error: e };
+    }
+};
+
+let setDatabases = async () => {
+    try {
+        await db.initialize();
+        logger.log(`\x1b[36m[${infoApp.name}]\x1b[0m Databases: listo`);
+    } catch (e) {
+        throw { msgs: "Error inicializar bases de datos", error: e };
+    }
+};
+
+let setMongo = async () => {
+    // Mongo es opcional (multimedia). Si falla, no tumbamos la app:
+    // mongo.initialize() ya captura su propio error y solo deshabilita
+    // los endpoints de multimedia.
+    try {
+        await mongo.initialize();
+    } catch (e) {
+        logger.log(
+            `\x1b[33m[${infoApp.name}]\x1b[0m Mongo no disponible: ${e.message}`
+        );
     }
 };
 
@@ -119,6 +151,8 @@ let initApp = async () => {
         setRequestLargeEntity();
         configCORS();
         await setConfig();
+        await setDatabases();
+        await setMongo();
         setRouters("base");
         setRouters("proyecto");
         launchApp();

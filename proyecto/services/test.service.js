@@ -1,0 +1,258 @@
+"use strict";
+
+/**
+ * Service de tests (módulo docente).
+ * Cubre RF-69 (crear test asociando preguntas con orden configurable).
+ *
+ * TODO(auth): cuando exista middleware JWT (RNF-19), tomar `creadoPor`
+ * desde `request.usuario.usuario_id` en vez del body.
+ */
+
+var reply = require("../../base/utils/reply");
+var db = require("../../base/utils/db");
+var testRepo = require("../repositories/test.repository");
+
+const TAG = "\x1b[36m[test]\x1b[0m";
+const TAG_ERR = "\x1b[31m[test]\x1b[0m";
+
+function _leerArg(request) {
+    try {
+        if (request.body && typeof request.body.arg === "string") {
+            return JSON.parse(request.body.arg);
+        }
+        return request.body || {};
+    } catch (e) {
+        return {};
+    }
+}
+
+function _validarComposicion(preguntas) {
+    // Test vacío permitido: el profesor agrega preguntas después en test-detalle.
+    if (preguntas == null) return null;
+    if (!Array.isArray(preguntas)) {
+        return "preguntas debe ser un arreglo (o se omite)";
+    }
+    if (preguntas.length === 0) return null;
+
+    const ordenes = new Set();
+    const ids = new Set();
+    for (let i = 0; i < preguntas.length; i++) {
+        const p = preguntas[i];
+        if (!p || !Number.isInteger(p.preguntaId) || p.preguntaId <= 0) {
+            return `Posición #${i + 1}: preguntaId inválido`;
+        }
+        if (!Number.isInteger(p.orden) || p.orden < 1) {
+            return `Posición #${i + 1}: orden debe ser entero ≥ 1`;
+        }
+        if (ordenes.has(p.orden)) {
+            return `Orden ${p.orden} duplicado`;
+        }
+        if (ids.has(p.preguntaId)) {
+            return `preguntaId ${p.preguntaId} repetida en el test`;
+        }
+        ordenes.add(p.orden);
+        ids.add(p.preguntaId);
+    }
+    return null;
+}
+
+async function crear(request, response) {
+    const b = _leerArg(request);
+    const creadoPor = Number(b.creadoPor);
+    logger.log(`${TAG} crear: prof=${b.creadoPor} coerced=${creadoPor} nombre="${b.nombre}" preguntas=${(b.preguntas || []).length}`);
+    try {
+        if (!b.nombre || typeof b.nombre !== "string") {
+            logger.log(`${TAG} crear: validación falló — nombre vacío`);
+            return response.json(reply.error("nombre requerido"));
+        }
+        if (!Number.isInteger(creadoPor) || creadoPor <= 0) {
+            logger.log(`${TAG} crear: validación falló — creadoPor inválido (${b.creadoPor})`);
+            return response.json(reply.error("creadoPor (usuario_id) requerido"));
+        }
+
+        const errComp = _validarComposicion(b.preguntas);
+        if (errComp) {
+            logger.log(`${TAG} crear: validación composición falló — ${errComp}`);
+            return response.json(reply.error(errComp));
+        }
+
+        const preguntasInput = Array.isArray(b.preguntas) ? b.preguntas : [];
+
+        if (preguntasInput.length > 0) {
+            const ids = preguntasInput.map((p) => p.preguntaId);
+            const encontradas = await testRepo.existenPreguntas(ids);
+            if (encontradas.length !== ids.length) {
+                const faltantes = ids.filter((id) => !encontradas.includes(id));
+                logger.log(`${TAG} crear: preguntas inexistentes/inactivas — [${faltantes.join(", ")}]`);
+                return response.json(
+                    reply.error(
+                        `Preguntas inexistentes o inactivas: ${faltantes.join(", ")}`
+                    )
+                );
+            }
+        }
+
+        const testId = await testRepo.crearTestConPreguntas({
+            nombre: b.nombre.trim(),
+            descripcion: b.descripcion ? String(b.descripcion).trim() : null,
+            ordenAleatorio: b.ordenAleatorio === true,
+            creadoPor: creadoPor,
+            cursoOrigenId: b.cursoOrigenId ? Number(b.cursoOrigenId) : null,
+            preguntas: preguntasInput.map((p) => ({
+                preguntaId: p.preguntaId,
+                orden: p.orden,
+            })),
+        });
+
+        logger.log(`${TAG} crear: OK test_id=${testId}`);
+        response.json(reply.ok({ test_id: testId }));
+    } catch (e) {
+        logger.log(`${TAG_ERR} crear: ${e.message}`, e);
+        response.json(reply.fatal(e));
+    }
+}
+
+async function listar(request, response) {
+    const b = _leerArg(request);
+    const coerced = Number(b.profesorId);
+    const profesorId = Number.isInteger(coerced) && coerced > 0 ? coerced : null;
+    logger.log(`${TAG} listar: profesorId=${profesorId || 'todos'}`);
+    try {
+        const data = await testRepo.listarPorProfesor(profesorId);
+        logger.log(`${TAG} listar: OK (${data.length} filas)`);
+        response.json(reply.ok(data));
+    } catch (e) {
+        logger.log(`${TAG_ERR} listar: ${e.message}`, e);
+        response.json(reply.fatal(e));
+    }
+}
+
+async function obtener(request, response) {
+    const b = _leerArg(request);
+    const testId = Number(b.testId);
+    logger.log(`${TAG} obtener: testId=${b.testId} coerced=${testId}`);
+    try {
+        if (!Number.isInteger(testId) || testId <= 0) {
+            logger.log(`${TAG} obtener: validación falló — testId inválido`);
+            return response.json(reply.error("testId requerido"));
+        }
+        const data = await testRepo.obtenerConPreguntas(testId);
+        if (!data) {
+            logger.log(`${TAG} obtener: no encontrado (id=${testId})`);
+            return response.json(reply.error("Test no encontrado"));
+        }
+        logger.log(`${TAG} obtener: OK id=${testId}`);
+        response.json(reply.ok(data));
+    } catch (e) {
+        logger.log(`${TAG_ERR} obtener: ${e.message}`, e);
+        response.json(reply.fatal(e));
+    }
+}
+
+/**
+ * POST /<rootPath>/editarTest  body.arg = { testId, nombre, descripcion?, ordenAleatorio, creadoPor }
+ * Solo el creador del test puede editarlo. Edita los datos básicos
+ * (las preguntas se gestionan aparte en test-detalle).
+ */
+async function editar(request, response) {
+    const b = _leerArg(request);
+    const testId = Number(b.testId);
+    const nombre = (b.nombre || "").trim();
+    const descripcion = b.descripcion ? String(b.descripcion).trim() : null;
+    const ordenAleatorio = b.ordenAleatorio === true;
+    const creadoPor = Number(b.creadoPor);
+    logger.log(`${TAG} editar: testId=${testId} creadoPor=${creadoPor}`);
+    try {
+        if (!Number.isInteger(testId) || testId <= 0)
+            return response.json(reply.error("testId requerido"));
+        if (!nombre) return response.json(reply.error("nombre requerido"));
+
+        const pool = db.getPool("auris");
+        const rCheck = await pool
+            .request()
+            .input("test_id", db.sql.BigInt, testId)
+            .query(`
+                SELECT creado_por, activo FROM auris.test
+                WHERE test_id = @test_id;
+            `);
+        if (rCheck.recordset.length === 0)
+            return response.json(reply.error("Test no encontrado"));
+        if (!rCheck.recordset[0].activo)
+            return response.json(reply.error("El test está inactivo"));
+        if (Number(rCheck.recordset[0].creado_por) !== creadoPor)
+            return response.json(reply.error("Solo el creador puede editar este test"));
+
+        await pool
+            .request()
+            .input("test_id", db.sql.BigInt, testId)
+            .input("nombre", db.sql.NVarChar(200), nombre)
+            .input("descripcion", db.sql.NVarChar(1000), descripcion)
+            .input("orden_aleatorio", db.sql.Bit, ordenAleatorio ? 1 : 0)
+            .query(`
+                UPDATE auris.test
+                SET    nombre = @nombre,
+                       descripcion = @descripcion,
+                       orden_aleatorio = @orden_aleatorio
+                WHERE  test_id = @test_id;
+            `);
+
+        logger.log(`${TAG} editar: OK testId=${testId}`);
+        response.json(reply.ok({ test_id: testId }));
+    } catch (e) {
+        logger.log(`${TAG_ERR} editar: ${e.message}`, e);
+        response.json(reply.fatal(e));
+    }
+}
+
+/**
+ * POST /<rootPath>/eliminarTest  body.arg = { testId, creadoPor }
+ * Soft-delete del test (activo=0). Conserva históricos (aplicaciones,
+ * evaluaciones). Las listas filtran por activo=1.
+ */
+async function eliminar(request, response) {
+    const b = _leerArg(request);
+    const testId = Number(b.testId);
+    const creadoPor = Number(b.creadoPor);
+    logger.log(`${TAG} eliminar: testId=${testId} creadoPor=${creadoPor}`);
+    try {
+        if (!Number.isInteger(testId) || testId <= 0)
+            return response.json(reply.error("testId requerido"));
+
+        const pool = db.getPool("auris");
+        const rCheck = await pool
+            .request()
+            .input("test_id", db.sql.BigInt, testId)
+            .query(`
+                SELECT creado_por, activo FROM auris.test
+                WHERE test_id = @test_id;
+            `);
+        if (rCheck.recordset.length === 0)
+            return response.json(reply.error("Test no encontrado"));
+        if (!rCheck.recordset[0].activo)
+            return response.json(reply.error("El test ya estaba eliminado"));
+        if (Number(rCheck.recordset[0].creado_por) !== creadoPor)
+            return response.json(reply.error("Solo el creador puede eliminar este test"));
+
+        await pool
+            .request()
+            .input("test_id", db.sql.BigInt, testId)
+            .query(`
+                UPDATE auris.test SET activo = 0
+                WHERE test_id = @test_id;
+            `);
+
+        logger.log(`${TAG} eliminar: OK testId=${testId}`);
+        response.json(reply.ok({ test_id: testId }));
+    } catch (e) {
+        logger.log(`${TAG_ERR} eliminar: ${e.message}`, e);
+        response.json(reply.fatal(e));
+    }
+}
+
+module.exports = {
+    crear,
+    listar,
+    obtener,
+    editar,
+    eliminar,
+};
