@@ -132,7 +132,7 @@ let setRouters = (module) => {
 
 let launchApp = () => {
     try {
-        app.listen(global.config.app.port, function () {
+        const server = app.listen(global.config.app.port, function () {
             logger.log(
                 `\x1b[36m[${
                     infoApp.name
@@ -140,6 +140,25 @@ let launchApp = () => {
                     global.config.app.port
                 }, Path: /${rootPath}, Tipo: LOGICA, v: ${infoApp.version}`
             );
+        });
+
+        // El error de listen (p.ej. EADDRINUSE) se emite de forma ASÍNCRONA
+        // como evento 'error' del server; el try/catch de arriba NO lo atrapa.
+        // Sin este handler, Node relanza el evento y mata el proceso con un
+        // stack trace feo. Acá lo logueamos claro y salimos con código 1.
+        server.on("error", (e) => {
+            if (e.code === "EADDRINUSE") {
+                logger.log(
+                    `\x1b[31m[${infoApp.name}]\x1b[0m Puerto ${global.config.app.port} en uso. ` +
+                        `¿Ya hay otra instancia de la lógica corriendo? Liberá el puerto y reintentá.`
+                );
+            } else {
+                logger.log(
+                    `\x1b[31m[${infoApp.name}]\x1b[0m Error del servidor HTTP: ${e.message}`,
+                    e
+                );
+            }
+            process.exit(1);
         });
     } catch (e) {
         throw { msgs: "Error lanzar app", error: e };
@@ -162,6 +181,26 @@ let initApp = async () => {
         );
     }
 };
+
+// Red de seguridad global: una excepción no atrapada en un handler de request
+// (o una promesa rechazada sin catch) NO debe tumbar todo el servidor. La
+// logueamos y dejamos el proceso vivo para seguir atendiendo el resto de
+// requests. En producción conviene además reiniciar vía un process manager
+// (pm2/systemd) tras un uncaughtException.
+process.on("uncaughtException", (e) => {
+    logger.log(
+        `\x1b[31m[${infoApp.name}]\x1b[0m uncaughtException: ${e && e.message ? e.message : e}`,
+        e
+    );
+});
+process.on("unhandledRejection", (reason) => {
+    logger.log(
+        `\x1b[31m[${infoApp.name}]\x1b[0m unhandledRejection: ${
+            reason && reason.message ? reason.message : reason
+        }`,
+        reason
+    );
+});
 
 initApp();
 

@@ -111,21 +111,37 @@ async function crear(request, response) {
             "http://localhost:8100";
         const link = `${frontBase}/registro-profesor/${tokenPlano}`;
 
-        // Enviar correo (en modo dev solo logea)
-        await mailer.send({
-            to: correo,
-            subject: "Invitación a Auris — completa tu registro",
-            text: `Hola,\n\nEl administrador de Auris te invitó a registrarte como profesor.\nHaz clic en el siguiente enlace para crear tu cuenta:\n\n${link}\n\nEste enlace expira el ${expiraEn.toISOString()} (en ${horas} horas).\nSi no esperabas esta invitación puedes ignorar este correo.\n\n— Equipo Auris`,
-            html: `<p>Hola,</p><p>El administrador de Auris te invitó a registrarte como profesor.</p><p><a href="${link}">Completa tu registro aquí</a></p><p>Este enlace expira en ${horas} horas.</p>`,
-            devLink: link,
-        });
+        // Enviar correo. La invitación ya está guardada, así que capturamos el
+        // fallo de envío aparte para informar con claridad (sin tirar 500).
+        let correoEnviado = false;
+        let modo = "dev";
+        try {
+            const envio = await mailer.send({
+                to: correo,
+                subject: "Invitación a Auris — completa tu registro",
+                text: `Hola,\n\nEl administrador de Auris te invitó a registrarte como profesor.\nHaz clic en el siguiente enlace para crear tu cuenta:\n\n${link}\n\nEste enlace expira el ${expiraEn.toISOString()} (en ${horas} horas).\nSi no esperabas esta invitación puedes ignorar este correo.\n\n— Equipo Auris`,
+                html: `<p>Hola,</p><p>El administrador de Auris te invitó a registrarte como profesor.</p><p><a href="${link}">Completa tu registro aquí</a></p><p>Este enlace expira en ${horas} horas.</p>`,
+                devLink: link,
+            });
+            modo = (envio && envio.mode) || "dev";
+            correoEnviado = !!(envio && envio.delivered); // true solo en SMTP real
+        } catch (mailErr) {
+            logger.log(`\x1b[31m[invitacion]\x1b[0m correo NO enviado a ${correo}: ${mailErr.message}`);
+            correoEnviado = false;
+            modo = "smtp";
+        }
 
+        const esDev = modo === "dev";
         response.json(
             reply.ok({
                 invitacion_id: invitacionId,
                 correo_destino: correo,
                 expira_en: expiraEn.toISOString(),
-                link: link, // útil solo en modo dev; en SMTP podemos ocultar
+                correo_enviado: correoEnviado, // true = salió por SMTP real
+                modo: modo,                     // "dev" | "smtp"
+                // El enlace solo se expone en modo dev (respaldo de pruebas).
+                // En modo real el profesor lo recibe por correo.
+                link: esDev ? link : null,
             })
         );
     } catch (e) {

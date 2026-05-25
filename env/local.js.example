@@ -38,6 +38,17 @@ module.exports = {
     mail: {
         mode: "dev",                                     // "dev" | "smtp"
         from: "Auris <no-reply@auris.local>",
+        // Para enviar correos REALES pon mode:"smtp" y completa el bloque smtp.
+        // Ejemplo con Gmail (requiere "Contraseña de aplicación", no la clave normal):
+        //   mode: "smtp",
+        //   from: "AURIS <tu.cuenta@gmail.com>",
+        //   smtp: {
+        //       host: "smtp.gmail.com",
+        //       port: 465,
+        //       secure: true,                            // 465=SSL; usa false + port 587 para STARTTLS
+        //       user: "tu.cuenta@gmail.com",
+        //       password: "xxxxxxxxxxxxxxxx",            // App Password de 16 caracteres
+        //   },
     },
     frontend: {
         // El puerto donde corre tu frontend (ng serve = 4200 por defecto).
