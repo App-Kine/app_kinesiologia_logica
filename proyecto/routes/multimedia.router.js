@@ -9,6 +9,10 @@
  * El frontend sube el archivo como multipart/form-data DIRECTO a la lógica
  * (campo `archivo`), por eso usamos multer con memoryStorage y NO el envoltorio
  * `arg=` del controlador.
+ *
+ * El límite de multer es el más alto de los tres tipos (video = 50MB). Cada
+ * tipo vuelve a validar su propio límite en el service (RNF-38 / RNF-39 /
+ * pedido cliente 2026-05-26).
  */
 
 var express = require("express");
@@ -18,12 +22,9 @@ var router = express.Router();
 var services = require("../services/multimedia.service");
 var { requireRole } = require("../../base/utils/jwtAuth");
 
-// memoryStorage: el buffer va directo a GridFS, no tocamos disco.
-// El límite duro lo ponemos al máximo de los dos (5MB); el service
-// vuelve a validar tamaño/MIME por tipo (RNF-38 / RNF-39).
 const upload = multer({
     storage: multer.memoryStorage(),
-    limits: { fileSize: services.AUDIO_MAX },
+    limits: { fileSize: services.VIDEO_MAX },
 });
 
 // Subidas (profesor)
@@ -39,10 +40,17 @@ router.post(
     upload.single("archivo"),
     services.subirImagen
 );
+router.post(
+    "/multimedia/subirVideo",
+    requireRole("PROFESOR"),
+    upload.single("archivo"),
+    services.subirVideo
+);
 
 // Streaming (público)
 router.get("/multimedia/audio/:id", services.obtenerAudio);
 router.get("/multimedia/imagen/:id", services.obtenerImagen);
+router.get("/multimedia/video/:id", services.obtenerVideo);
 
 // Eliminar (profesor)
 router.post("/multimedia/eliminar", requireRole("PROFESOR"), services.eliminar);

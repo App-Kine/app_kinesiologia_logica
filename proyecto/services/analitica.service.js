@@ -60,13 +60,15 @@ async function detalleAplicacion(request, response) {
         }
         const preguntas = await analiticaRepo.preguntasPorAplicacion(aplicacionId);
         const evaluaciones = await analiticaRepo.evaluacionesPorAplicacion(aplicacionId);
+        const tiemposIdentificados = await analiticaRepo.tiemposPorEvaluacionPregunta(aplicacionId);
 
-        logger.log(`${TAG} detalleAplicacion: OK (${preguntas.length} preguntas, ${evaluaciones.length} evals)`);
+        logger.log(`${TAG} detalleAplicacion: OK (${preguntas.length} preguntas, ${evaluaciones.length} evals, ${tiemposIdentificados.length} timings)`);
         response.json(
             reply.ok({
                 resumen: resumenApl,
                 preguntas: preguntas,
                 evaluaciones: evaluaciones,
+                tiempos_identificados: tiemposIdentificados,
             })
         );
     } catch (e) {

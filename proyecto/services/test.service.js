@@ -206,8 +206,16 @@ async function editar(request, response) {
 
 /**
  * POST /<rootPath>/eliminarTest  body.arg = { testId, creadoPor }
- * Soft-delete del test (activo=0). Conserva históricos (aplicaciones,
- * evaluaciones). Las listas filtran por activo=1.
+ *
+ * Soft-delete del test (activo=0) + CASCADE-deactivate de sus aplicaciones
+ * activas en cursos (aplicacion_test.activo=0). Conserva las evaluaciones
+ * históricas (RF-104) y los registros de respuestas para que la analítica
+ * siga funcionando.
+ *
+ * Fix 2026-05-26: antes solo desactivaba el test, pero las aplicaciones
+ * seguían visibles en el detalle del curso. Ahora se hace todo en una
+ * transacción para evitar estados inconsistentes (test inactivo + aplicación
+ * activa apuntando a él).
  */
 async function eliminar(request, response) {
     const b = _leerArg(request);
@@ -233,16 +241,43 @@ async function eliminar(request, response) {
         if (Number(rCheck.recordset[0].creado_por) !== creadoPor)
             return response.json(reply.error("Solo el creador puede eliminar este test"));
 
-        await pool
-            .request()
-            .input("test_id", db.sql.BigInt, testId)
-            .query(`
-                UPDATE auris.test SET activo = 0
-                WHERE test_id = @test_id;
-            `);
+        const tx = new db.sql.Transaction(pool);
+        await tx.begin();
+        try {
+            // 1) Soft-delete del test
+            await new db.sql.Request(tx)
+                .input("test_id", db.sql.BigInt, testId)
+                .query(`
+                    UPDATE auris.test SET activo = 0
+                    WHERE test_id = @test_id;
+                `);
 
-        logger.log(`${TAG} eliminar: OK testId=${testId}`);
-        response.json(reply.ok({ test_id: testId }));
+            // 2) Cascade: desactivar todas las aplicaciones (instancias en
+            //    cursos) que apuntaban a este test. Sin esto las aplicaciones
+            //    quedarían "huérfanas" visibles en el detalle del curso.
+            const rAplic = await new db.sql.Request(tx)
+                .input("test_id", db.sql.BigInt, testId)
+                .query(`
+                    UPDATE auris.aplicacion_test
+                    SET    activo = 0
+                    WHERE  test_id = @test_id
+                      AND  activo = 1;
+                    SELECT @@ROWCOUNT AS afectadas;
+                `);
+            const afectadas = rAplic.recordset && rAplic.recordset[0]
+                ? rAplic.recordset[0].afectadas
+                : 0;
+
+            await tx.commit();
+            logger.log(`${TAG} eliminar: OK testId=${testId} aplicaciones desactivadas=${afectadas}`);
+            response.json(reply.ok({
+                test_id: testId,
+                aplicaciones_desactivadas: afectadas,
+            }));
+        } catch (e) {
+            try { await tx.rollback(); } catch (_) {}
+            throw e;
+        }
     } catch (e) {
         logger.log(`${TAG_ERR} eliminar: ${e.message}`, e);
         response.json(reply.fatal(e));

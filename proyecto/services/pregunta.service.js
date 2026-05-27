@@ -91,6 +91,12 @@ async function crear(request, response) {
                 reply.error("imagenGridId inválido (debe ser ObjectId hex 24)")
             );
         }
+        if (b.videoGridId && !GRID_ID_RE.test(b.videoGridId)) {
+            logger.log(`${TAG} crear: videoGridId inválido (${b.videoGridId})`);
+            return response.json(
+                reply.error("videoGridId inválido (debe ser ObjectId hex 24)")
+            );
+        }
 
         const errAlts = _validarAlternativas(b.alternativas);
         if (errAlts) {
@@ -103,6 +109,7 @@ async function crear(request, response) {
             explicacionClinica: b.explicacionClinica.trim(),
             audioGridId: b.audioGridId || null,
             imagenGridId: b.imagenGridId || null,
+            videoGridId: b.videoGridId || null,
             creadoPor: creadoPor,
             cursoOrigenId: b.cursoOrigenId ? Number(b.cursoOrigenId) : null,
             alternativas: b.alternativas.map((a) => ({
@@ -173,6 +180,8 @@ async function editar(request, response) {
             return response.json(reply.error("audioGridId inválido"));
         if (b.imagenGridId && !GRID_ID_RE.test(b.imagenGridId))
             return response.json(reply.error("imagenGridId inválido"));
+        if (b.videoGridId && !GRID_ID_RE.test(b.videoGridId))
+            return response.json(reply.error("videoGridId inválido"));
 
         const errAlts = _validarAlternativas(b.alternativas);
         if (errAlts) return response.json(reply.error(errAlts));
@@ -184,6 +193,7 @@ async function editar(request, response) {
                 explicacionClinica: b.explicacionClinica.trim(),
                 audioGridId: b.audioGridId || null,
                 imagenGridId: b.imagenGridId || null,
+                videoGridId: b.videoGridId || null,
                 alternativas: b.alternativas.map((a) => ({
                     texto: a.texto.trim(),
                     esCorrecta: a.esCorrecta === true,
@@ -265,6 +275,8 @@ async function agregarATest(request, response) {
             return response.json(reply.error("audioGridId inválido"));
         if (b.imagenGridId && !GRID_ID_RE.test(b.imagenGridId))
             return response.json(reply.error("imagenGridId inválido"));
+        if (b.videoGridId && !GRID_ID_RE.test(b.videoGridId))
+            return response.json(reply.error("videoGridId inválido"));
         const errAlts = _validarAlternativas(b.alternativas);
         if (errAlts) return response.json(reply.error(errAlts));
 
@@ -274,6 +286,7 @@ async function agregarATest(request, response) {
             explicacionClinica: b.explicacionClinica.trim(),
             audioGridId: b.audioGridId || null,
             imagenGridId: b.imagenGridId || null,
+            videoGridId: b.videoGridId || null,
             creadoPor: creadoPor,
             cursoOrigenId: null,
             alternativas: b.alternativas.map((a) => ({

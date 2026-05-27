@@ -106,8 +106,11 @@ async function iniciar(request, response) {
 
 /**
  * POST /evaluacion/responder
- * body: { evaluacionId, preguntaId, alternativaId, intento, ordenPresentacion }
+ * body: { evaluacionId, preguntaId, alternativaId, intento, ordenPresentacion, tiempoSegundos? }
  * RF-25/26/31/32/34/35/36/38.
+ *
+ * `tiempoSegundos` (pedido cliente 2026-05-26): segundos en pantalla.
+ * Solo se persiste cuando este intento finaliza la pregunta.
  */
 async function responder(request, response) {
     const b = _leerArg(request);
@@ -116,7 +119,10 @@ async function responder(request, response) {
     const alternativaId = Number(b.alternativaId);
     const intento = Number(b.intento);
     const ordenPresentacion = Number(b.ordenPresentacion) || 1;
-    logger.log(`${TAG} responder: eval=${evaluacionId} preg=${preguntaId} intento=${intento}`);
+    const tiempoSegundos = (b.tiempoSegundos != null && Number.isFinite(Number(b.tiempoSegundos)))
+        ? Math.max(0, Math.round(Number(b.tiempoSegundos)))
+        : null;
+    logger.log(`${TAG} responder: eval=${evaluacionId} preg=${preguntaId} intento=${intento} tiempo=${tiempoSegundos}`);
     try {
         if (!Number.isInteger(evaluacionId) || evaluacionId <= 0)
             return response.json(reply.error("evaluacionId requerido"));
@@ -134,7 +140,7 @@ async function responder(request, response) {
 
         try {
             const res = await evalRepo.registrarRespuesta(
-                evaluacionId, preguntaId, alternativaId, intento, ordenPresentacion
+                evaluacionId, preguntaId, alternativaId, intento, ordenPresentacion, tiempoSegundos
             );
             logger.log(`${TAG} responder: OK correcta=${res.correcta} finalizada=${res.finalizadaPregunta}`);
             response.json(reply.ok(res));
@@ -314,10 +320,59 @@ async function enviarInforme(request, response) {
     }
 }
 
+/**
+ * POST /evaluacion/informeCompleto   body: { evaluacionId }
+ * Devuelve el detalle completo para descargar como PDF (pedido cliente
+ * 2026-05-26). PÚBLICO: aplica tanto a evaluaciones anónimas como
+ * identificadas, no requiere JWT (igual que el resto del flujo estudiante).
+ *
+ * Devuelve: cabecera + lista de preguntas con todas las alternativas,
+ * cuál marcó el estudiante en cada intento, cuál era la correcta,
+ * explicación clínica y tiempo dedicado.
+ */
+async function informeCompleto(request, response) {
+    const b = _leerArg(request);
+    const evaluacionId = Number(b.evaluacionId);
+    logger.log(`${TAG} informeCompleto: eval=${evaluacionId}`);
+    try {
+        if (!Number.isInteger(evaluacionId) || evaluacionId <= 0)
+            return response.json(reply.error("evaluacionId requerido"));
+
+        const info = await evalRepo.obtenerInforme(evaluacionId);
+        if (!info) return response.json(reply.error("Evaluación no encontrada"));
+        if (info.estado !== "FINALIZADA")
+            return response.json(reply.error("La evaluación aún no está finalizada"));
+
+        const preguntas = await evalRepo.obtenerInformeCompletoPorPregunta(evaluacionId);
+
+        response.json(reply.ok({
+            cabecera: {
+                evaluacion_id: info.evaluacion_id,
+                modalidad: info.modalidad,
+                correo_estudiante: info.correo_estudiante, // null si anónima
+                test_nombre: info.test_nombre,
+                curso_nombre: info.curso_nombre,
+                curso_codigo: info.curso_codigo,
+                total_preguntas: info.total_preguntas,
+                aciertos_primer: info.aciertos_primer,
+                aciertos_segundo: info.aciertos_segundo,
+                incorrectas: info.incorrectas,
+                porcentaje_global: info.porcentaje_global,
+                finalizada_en: info.finalizada_en,
+            },
+            preguntas: preguntas,
+        }));
+    } catch (e) {
+        logger.log(`${TAG_ERR} informeCompleto: ${e.message}`, e);
+        response.json(reply.fatal(e));
+    }
+}
+
 module.exports = {
     aplicacionesActivas,
     iniciar,
     responder,
     finalizar,
     enviarInforme,
+    informeCompleto,
 };

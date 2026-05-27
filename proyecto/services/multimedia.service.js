@@ -1,12 +1,15 @@
 "use strict";
 
 /**
- * Service de multimedia (audios e imágenes de las preguntas).
+ * Service de multimedia (audios, imágenes y videos de las preguntas).
  *
- * Los binarios viven en MongoDB GridFS (audio ≤10MB MP3/WAV,
- * RNF-39 imagen ≤2MB JPG/PNG). Los datos relacionales siguen en SQL Server;
- * la pregunta solo guarda el `grid_id` (ObjectId hex 24) en
- * audio_grid_id / imagen_grid_id.
+ * Los binarios viven en MongoDB GridFS:
+ *   - audio   ≤ 10 MB  MP3/WAV
+ *   - imagen  ≤ 2 MB   JPG/PNG   (RNF-39)
+ *   - video   ≤ 50 MB  MP4/WebM  (pedido cliente 2026-05-26)
+ *
+ * Los datos relacionales siguen en SQL Server; la pregunta solo guarda el
+ * `grid_id` (ObjectId hex 24) en audio_grid_id / imagen_grid_id / video_grid_id.
  *
  * A diferencia del resto de la lógica, estos endpoints NO reciben `arg=...`:
  * el frontend sube el archivo como multipart/form-data DIRECTO a la lógica
@@ -14,7 +17,7 @@
  * Authorization: Bearer <jwt> (ver base/utils/jwtAuth.js).
  *
  * Subir/eliminar: JWT profesor. Obtener (streaming): público (el estudiante
- * reproduce el audio sin estar logueado, RF-01).
+ * reproduce sin estar logueado, RF-01).
  */
 
 var reply = require("../../base/utils/reply");
@@ -27,8 +30,10 @@ const GRID_ID_RE = /^[a-fA-F0-9]{24}$/;
 
 const AUDIO_MAX = 10 * 1024 * 1024; // 10 MB
 const IMAGEN_MAX = 2 * 1024 * 1024; // RNF-39
+const VIDEO_MAX = 50 * 1024 * 1024; // 50 MB (pedido cliente 2026-05-26)
 const AUDIO_MIME = ["audio/mpeg", "audio/wav", "audio/x-wav", "audio/wave"];
 const IMAGEN_MIME = ["image/jpeg", "image/jpg", "image/png"];
+const VIDEO_MIME = ["video/mp4", "video/webm", "video/quicktime"];
 
 function _checkReady(response) {
     if (!mongo.isReady()) {
@@ -58,16 +63,43 @@ function _subirAGrid(bucket, file, metadata) {
     });
 }
 
+function _bucketParaTipo(tipo) {
+    if (tipo === "audio") return mongo.bucketAudios();
+    if (tipo === "imagen") return mongo.bucketImagenes();
+    if (tipo === "video") return mongo.bucketVideos();
+    throw new Error("tipo inválido: " + tipo);
+}
+
+function _mimePermitidos(tipo) {
+    if (tipo === "audio") return AUDIO_MIME;
+    if (tipo === "imagen") return IMAGEN_MIME;
+    if (tipo === "video") return VIDEO_MIME;
+    return [];
+}
+
+function _maxBytes(tipo) {
+    if (tipo === "audio") return AUDIO_MAX;
+    if (tipo === "imagen") return IMAGEN_MAX;
+    if (tipo === "video") return VIDEO_MAX;
+    return 0;
+}
+
+function _etiquetaLimite(tipo) {
+    if (tipo === "audio") return "10MB MP3/WAV";
+    if (tipo === "imagen") return "2MB JPG/PNG (RNF-39)";
+    if (tipo === "video") return "50MB MP4/WebM";
+    return "";
+}
+
 async function _subir(request, response, tipo) {
     if (!_checkReady(response)) return;
 
     const usuarioId = request.usuario ? request.usuario.sub : null;
     const file = request.file;
-    const esAudio = tipo === "audio";
-    const bucket = esAudio ? mongo.bucketAudios() : mongo.bucketImagenes();
-    const mimePermitidos = esAudio ? AUDIO_MIME : IMAGEN_MIME;
-    const maxBytes = esAudio ? AUDIO_MAX : IMAGEN_MAX;
-    const rnf = esAudio ? "10MB MP3/WAV" : "RNF-39 (2MB JPG/PNG)";
+    const bucket = _bucketParaTipo(tipo);
+    const mimePermitidos = _mimePermitidos(tipo);
+    const maxBytes = _maxBytes(tipo);
+    const rnf = _etiquetaLimite(tipo);
 
     logger.log(`${TAG} subir ${tipo}: prof=${usuarioId} file=${file ? file.originalname : "—"}`);
 
@@ -116,9 +148,20 @@ async function subirImagen(request, response) {
     return _subir(request, response, "imagen");
 }
 
+async function subirVideo(request, response) {
+    return _subir(request, response, "video");
+}
+
+function _colNameParaTipo(tipo) {
+    if (tipo === "audio") return mongo.BUCKET_AUDIOS;
+    if (tipo === "imagen") return mongo.BUCKET_IMAGENES;
+    if (tipo === "video") return mongo.BUCKET_VIDEOS;
+    return null;
+}
+
 /**
  * Streaming público de un archivo por su grid_id. `tipo` decide el bucket.
- * Soporta Range parcial básico para que el <audio> haga seek.
+ * Soporta Range parcial básico (importante para <audio>/<video> seek).
  */
 async function _obtener(request, response, tipo) {
     if (!mongo.isReady()) {
@@ -126,9 +169,8 @@ async function _obtener(request, response, tipo) {
     }
 
     const id = request.params.id;
-    const esAudio = tipo === "audio";
-    const bucket = esAudio ? mongo.bucketAudios() : mongo.bucketImagenes();
-    const colName = esAudio ? mongo.BUCKET_AUDIOS : mongo.BUCKET_IMAGENES;
+    const bucket = _bucketParaTipo(tipo);
+    const colName = _colNameParaTipo(tipo);
 
     try {
         if (!GRID_ID_RE.test(id || "")) {
@@ -185,9 +227,13 @@ async function obtenerImagen(request, response) {
     return _obtener(request, response, "imagen");
 }
 
+async function obtenerVideo(request, response) {
+    return _obtener(request, response, "video");
+}
+
 /**
  * Borra un archivo por grid_id + tipo. JWT profesor.
- * Body (arg= o JSON puro): { gridId, tipo: "audio" | "imagen" }
+ * Body (arg= o JSON puro): { gridId, tipo: "audio" | "imagen" | "video" }
  */
 async function eliminar(request, response) {
     if (!_checkReady(response)) return;
@@ -207,12 +253,11 @@ async function eliminar(request, response) {
         if (!GRID_ID_RE.test(gridId || "")) {
             return response.json(reply.error("gridId inválido"));
         }
-        if (tipo !== "audio" && tipo !== "imagen") {
-            return response.json(reply.error("tipo debe ser 'audio' o 'imagen'"));
+        if (tipo !== "audio" && tipo !== "imagen" && tipo !== "video") {
+            return response.json(reply.error("tipo debe ser 'audio', 'imagen' o 'video'"));
         }
 
-        const bucket =
-            tipo === "audio" ? mongo.bucketAudios() : mongo.bucketImagenes();
+        const bucket = _bucketParaTipo(tipo);
         const _id = new mongo.ObjectId(gridId);
 
         try {
@@ -233,10 +278,13 @@ async function eliminar(request, response) {
 module.exports = {
     subirAudio,
     subirImagen,
+    subirVideo,
     obtenerAudio,
     obtenerImagen,
+    obtenerVideo,
     eliminar,
     // límites expuestos por si el router los necesita para multer
     AUDIO_MAX,
     IMAGEN_MAX,
+    VIDEO_MAX,
 };
