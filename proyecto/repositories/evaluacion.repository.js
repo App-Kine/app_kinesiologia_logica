@@ -504,6 +504,236 @@ async function obtenerInformeCompletoPorPregunta(evaluacionId) {
     }));
 }
 
+/* =============================================================================
+   NUEVO FLUJO (auditoría 2026-05-28): "como si no pasara nada".
+   Si el estudiante no finaliza, NADA se persiste en BD. El backend tiene dos
+   endpoints nuevos:
+     - corregirIntento → corrección pura, sin escribir.
+     - enviarEvaluacionCompleta → crea evaluacion + respuestas + totales
+       todo en UNA transacción atómica al final.
+   ============================================================================= */
+
+/**
+ * Corrige una respuesta SIN persistir nada. Devuelve es_correcta + (si la
+ * pregunta queda "finalizada") correcta_id + explicación.
+ *
+ * El intento lo informa el cliente:
+ *   - intento=1 + correcta  → revela
+ *   - intento=1 + incorrecta → solo informa que no acertó (no revela)
+ *   - intento=2              → siempre revela
+ *
+ * Esto reemplaza al endpoint `responder` que persistía cada intento.
+ */
+async function corregirIntento(preguntaId, alternativaId, intento) {
+    const corr = await _datosCorreccion(preguntaId, alternativaId);
+    if (!corr) {
+        const e = new Error("La alternativa no pertenece a la pregunta");
+        e.code = "ALT_INVALIDA";
+        throw e;
+    }
+    const reveal = corr.esCorrecta || intento === 2;
+    return {
+        correcta: corr.esCorrecta,
+        intento: intento,
+        finalizadaPregunta: corr.esCorrecta || intento === 2,
+        puedeReintentar: !corr.esCorrecta && intento === 1,
+        correctaAlternativaId: reveal ? corr.correctaId : null,
+        explicacion: reveal ? corr.explicacion : null,
+    };
+}
+
+/**
+ * Crea evaluación + respuestas + finaliza, TODO en una sola transacción.
+ *
+ * Si cualquier paso falla, ROLLBACK completo: la BD queda igual que antes.
+ * Esto implementa la política "como si no pasara nada" si el estudiante
+ * abandona: nunca se llama a esta función hasta que envía el test completo.
+ *
+ * La corrección se recalcula server-side (no se confía en lo que mande el
+ * cliente), preservando RF-66 y la integridad de los resultados.
+ *
+ * @param {object} payload
+ * @param {number} payload.aplicacionId
+ * @param {string} payload.modalidad      "ANONIMA" | "IDENTIFICADA"
+ * @param {string|null} payload.correo    requerido si IDENTIFICADA
+ * @param {Array<{
+ *     preguntaId:number,
+ *     ordenPresentacion:number,
+ *     alternativaIntento1Id:number,
+ *     alternativaIntento2Id:number|null,
+ *     tiempoSegundos:number|null
+ * }>} payload.respuestas
+ *
+ * @returns resumen { evaluacion_id, evaluacion_uuid, total_preguntas,
+ *                    aciertos_primer, aciertos_segundo, incorrectas,
+ *                    porcentaje_global }
+ */
+async function enviarEvaluacionCompleta(payload) {
+    const { aplicacionId, modalidad, correo, respuestas } = payload;
+    const pool = db.getPool("auris");
+
+    // Pre-validaciones (fuera de la transacción para fallar rápido sin escribir):
+    // 1) Aplicación activa
+    const apl = await obtenerAplicacionActiva(aplicacionId);
+    if (!apl) {
+        const e = new Error("La aplicación no está disponible");
+        e.code = "APL_INACTIVA"; throw e;
+    }
+
+    // 2) Total de preguntas activas del test (para validar cobertura)
+    const rTotal = await pool
+        .request()
+        .input("test_id", db.sql.BigInt, apl.test_id)
+        .query(`
+            SELECT COUNT(*) AS total
+            FROM   auris.test_pregunta tp
+            JOIN   auris.pregunta p ON p.pregunta_id = tp.pregunta_id
+            WHERE  tp.test_id = @test_id AND p.activo = 1;
+        `);
+    const totalPreguntas = rTotal.recordset[0].total;
+
+    if (!Array.isArray(respuestas) || respuestas.length === 0) {
+        const e = new Error("Debes responder al menos una pregunta");
+        e.code = "SIN_RESPUESTAS"; throw e;
+    }
+
+    // 3) Resolvemos la corrección de cada respuesta UNA vez por pregunta
+    //    (se hace antes de la transacción para no abrir locks innecesariamente)
+    const correctoPorAlt = {};   // alternativa_id → { esCorrecta, correctaId, explicacion }
+    for (const r of respuestas) {
+        const c1 = await _datosCorreccion(r.preguntaId, r.alternativaIntento1Id);
+        if (!c1) {
+            const e = new Error(`Alternativa de intento 1 inválida para pregunta ${r.preguntaId}`);
+            e.code = "ALT_INVALIDA"; throw e;
+        }
+        correctoPorAlt[`${r.preguntaId}_1`] = c1;
+        if (r.alternativaIntento2Id) {
+            const c2 = await _datosCorreccion(r.preguntaId, r.alternativaIntento2Id);
+            if (!c2) {
+                const e = new Error(`Alternativa de intento 2 inválida para pregunta ${r.preguntaId}`);
+                e.code = "ALT_INVALIDA"; throw e;
+            }
+            correctoPorAlt[`${r.preguntaId}_2`] = c2;
+        }
+    }
+
+    // === Transacción atómica ===
+    const tx = new db.sql.Transaction(pool);
+    await tx.begin();
+    try {
+        // 1. Crear evaluación directamente como FINALIZADA
+        const reqEv = new db.sql.Request(tx);
+        const rEv = await reqEv
+            .input("aplicacion_id", db.sql.BigInt, aplicacionId)
+            .input("modalidad", db.sql.VarChar(15), modalidad)
+            .input("correo", db.sql.NVarChar(254), correo || null)
+            .query(`
+                INSERT INTO auris.evaluacion
+                    (aplicacion_id, modalidad, correo_estudiante, estado, finalizada_en)
+                OUTPUT INSERTED.evaluacion_id, INSERTED.evaluacion_uuid
+                VALUES (@aplicacion_id, @modalidad, @correo, 'FINALIZADA', SYSUTCDATETIME());
+            `);
+        const evaluacionId = rEv.recordset[0].evaluacion_id;
+        const evaluacionUuid = rEv.recordset[0].evaluacion_uuid;
+
+        // 2. Insertar todas las respuestas + calcular acumuladores
+        let aciertosPrimer = 0, aciertosSegundo = 0, incorrectas = 0;
+
+        for (const r of respuestas) {
+            const c1 = correctoPorAlt[`${r.preguntaId}_1`];
+            const c2 = r.alternativaIntento2Id ? correctoPorAlt[`${r.preguntaId}_2`] : null;
+
+            let intentosUsados, resultado, alt2Id, correcta2;
+            if (c1.esCorrecta) {
+                intentosUsados = 1;
+                resultado = "CORRECTA_INT1";
+                alt2Id = null;
+                correcta2 = null;
+                aciertosPrimer++;
+            } else if (c2) {
+                intentosUsados = 2;
+                resultado = c2.esCorrecta ? "CORRECTA_INT2" : "INCORRECTA";
+                alt2Id = r.alternativaIntento2Id;
+                correcta2 = c2.esCorrecta ? 1 : 0;
+                if (c2.esCorrecta) aciertosSegundo++;
+                else incorrectas++;
+            } else {
+                // intento 1 falló y no hay intento 2: incorrecta sin reintento
+                intentosUsados = 1;
+                resultado = "INCORRECTA";
+                alt2Id = null;
+                correcta2 = null;
+                incorrectas++;
+            }
+
+            const tiempoSeg = (r.tiempoSegundos != null && Number.isFinite(Number(r.tiempoSegundos)))
+                ? Math.max(0, Math.round(Number(r.tiempoSegundos)))
+                : null;
+
+            await new db.sql.Request(tx)
+                .input("evaluacion_id", db.sql.BigInt, evaluacionId)
+                .input("pregunta_id", db.sql.BigInt, r.preguntaId)
+                .input("orden", db.sql.SmallInt, r.ordenPresentacion)
+                .input("alt1", db.sql.BigInt, r.alternativaIntento1Id)
+                .input("correcta1", db.sql.Bit, c1.esCorrecta ? 1 : 0)
+                .input("alt2", db.sql.BigInt, alt2Id)
+                .input("correcta2", db.sql.Bit, correcta2)
+                .input("intentos", db.sql.TinyInt, intentosUsados)
+                .input("resultado", db.sql.VarChar(20), resultado)
+                .input("tiempo", db.sql.Int, tiempoSeg)
+                .query(`
+                    INSERT INTO auris.respuesta_pregunta
+                        (evaluacion_id, pregunta_id, orden_presentacion,
+                         alternativa_intento1_id, correcta_intento1,
+                         alternativa_intento2_id, correcta_intento2,
+                         intentos_usados, resultado, tiempo_segundos)
+                    VALUES (@evaluacion_id, @pregunta_id, @orden,
+                            @alt1, @correcta1,
+                            @alt2, @correcta2,
+                            @intentos, @resultado, @tiempo);
+                `);
+        }
+
+        // 3. Actualizar totales en la evaluación
+        const porcentaje =
+            totalPreguntas > 0
+                ? Math.round(((aciertosPrimer + aciertosSegundo) / totalPreguntas) * 10000) / 100
+                : 0;
+
+        await new db.sql.Request(tx)
+            .input("evaluacion_id", db.sql.BigInt, evaluacionId)
+            .input("total", db.sql.SmallInt, totalPreguntas)
+            .input("ap", db.sql.SmallInt, aciertosPrimer)
+            .input("as", db.sql.SmallInt, aciertosSegundo)
+            .input("inc", db.sql.SmallInt, incorrectas)
+            .input("pct", db.sql.Decimal(5, 2), porcentaje)
+            .query(`
+                UPDATE auris.evaluacion
+                SET    total_preguntas = @total,
+                       aciertos_primer = @ap,
+                       aciertos_segundo = @as,
+                       incorrectas = @inc,
+                       porcentaje_global = @pct
+                WHERE  evaluacion_id = @evaluacion_id;
+            `);
+
+        await tx.commit();
+        return {
+            evaluacion_id: evaluacionId,
+            evaluacion_uuid: evaluacionUuid,
+            total_preguntas: totalPreguntas,
+            aciertos_primer: aciertosPrimer,
+            aciertos_segundo: aciertosSegundo,
+            incorrectas: incorrectas,
+            porcentaje_global: porcentaje,
+        };
+    } catch (e) {
+        logger.log(`${TAG_ERR} enviarEvaluacionCompleta rollback: ${e.message}`, e);
+        try { await tx.rollback(); } catch (_) {}
+        throw e;
+    }
+}
+
 /** Marca el informe como enviado (RF-42). */
 async function marcarInformeEnviado(evaluacionId) {
     await db
@@ -528,4 +758,7 @@ module.exports = {
     obtenerDetallePorPregunta,
     obtenerInformeCompletoPorPregunta,
     marcarInformeEnviado,
+    // Flujo "no persistir incompletas" (auditoría 2026-05-28)
+    corregirIntento,
+    enviarEvaluacionCompleta,
 };

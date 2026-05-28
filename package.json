@@ -10,9 +10,24 @@
     "prod": "SET NODE_ENV=production & nodemon index.js",
     "dev-unix": "NODE_ENV=development nodemon index.js",
     "prod-unix": "NODE_ENV=production nodemon index.js",
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "jest --runInBand",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
     "prettier-c": "prettier --check .",
     "prettier-w": "prettier --write ."
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "testMatch": ["**/tests/**/*.test.js"],
+    "collectCoverageFrom": [
+      "proyecto/services/**/*.js",
+      "proyecto/repositories/**/*.js",
+      "!proyecto/services/multimedia.service.js"
+    ],
+    "coverageThreshold": {
+      "global": { "branches": 50, "functions": 50, "lines": 60, "statements": 60 }
+    },
+    "setupFiles": ["<rootDir>/tests/setup.js"]
   },
   "author": "CIDUV",
   "license": "MIT",
@@ -29,6 +44,7 @@
     "nodemailer": "^8.0.8"
   },
   "devDependencies": {
+    "jest": "^29.7.0",
     "nodemon": "^2.0.14",
     "prettier": "^2.6.2"
   }
