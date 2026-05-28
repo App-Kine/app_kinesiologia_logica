@@ -13,6 +13,7 @@
  */
 
 var reply = require("../../base/utils/reply");
+var db = require("../../base/utils/db");
 var aplicacionRepo = require("../repositories/aplicacion.repository");
 
 const TAG = "\x1b[36m[aplicacion]\x1b[0m";
@@ -25,6 +26,7 @@ function _leerArg(request) {
         }
         return request.body || {};
     } catch (e) {
+        logger.log(`${TAG_ERR} _leerArg: arg JSON inválido — ${e.message}`);
         return {};
     }
 }
@@ -128,10 +130,16 @@ async function setActivo(request, response) {
 
 /**
  * POST /<rootPath>/eliminarAplicacion  body.arg = { aplicacionId }
+ *
  * Borra la aplicación. Si tiene evaluaciones registradas, falla por FK y
  * sugerimos usar setActivo(false) en su lugar.
+ *
+ * Fix Día 3 (auditoría 2026-05-27): el check de evaluaciones + DELETE
+ * van en una transacción SERIALIZABLE para evitar TOCTOU (que entre el
+ * SELECT COUNT y el DELETE se inserte una nueva evaluación). Sin esto
+ * la FK terminaría tirando un error críptico al cliente en lugar del
+ * mensaje claro que devolvemos arriba.
  */
-var db = require("../../base/utils/db");
 async function eliminar(request, response) {
     const b = _leerArg(request);
     const aplicacionId = Number(b.aplicacionId);
@@ -141,33 +149,43 @@ async function eliminar(request, response) {
             return response.json(reply.error("aplicacionId requerido"));
 
         const pool = db.getPool("auris");
-        // Verificar que no haya evaluaciones asociadas
-        const rEval = await pool
-            .request()
-            .input("aplicacion_id", db.sql.BigInt, aplicacionId)
-            .query(`
-                SELECT COUNT(*) AS total
-                FROM   auris.evaluacion
-                WHERE  aplicacion_id = @aplicacion_id;
-            `);
-        if (rEval.recordset[0].total > 0) {
-            return response.json(reply.error(
-                `No se puede eliminar: hay ${rEval.recordset[0].total} evaluación(es) asociada(s). Usa "desactivar" para ocultarla a los estudiantes.`
-            ));
+        const tx = new db.sql.Transaction(pool);
+        // SERIALIZABLE: el rango leído por el COUNT queda lockeado hasta el commit,
+        // así nadie puede insertar evaluaciones en medio.
+        await tx.begin(db.sql.ISOLATION_LEVEL.SERIALIZABLE);
+        try {
+            const rEval = await new db.sql.Request(tx)
+                .input("aplicacion_id", db.sql.BigInt, aplicacionId)
+                .query(`
+                    SELECT COUNT(*) AS total
+                    FROM   auris.evaluacion
+                    WHERE  aplicacion_id = @aplicacion_id;
+                `);
+            if (rEval.recordset[0].total > 0) {
+                await tx.rollback();
+                return response.json(reply.error(
+                    `No se puede eliminar: hay ${rEval.recordset[0].total} evaluación(es) asociada(s). Usa "desactivar" para ocultarla a los estudiantes.`
+                ));
+            }
+
+            const rDel = await new db.sql.Request(tx)
+                .input("aplicacion_id", db.sql.BigInt, aplicacionId)
+                .query(`
+                    DELETE FROM auris.aplicacion_test
+                    WHERE aplicacion_id = @aplicacion_id;
+                `);
+            if (rDel.rowsAffected[0] === 0) {
+                await tx.rollback();
+                return response.json(reply.error("Aplicación no encontrada"));
+            }
+
+            await tx.commit();
+            logger.log(`${TAG} eliminar: OK id=${aplicacionId}`);
+            response.json(reply.ok({ aplicacion_id: aplicacionId }));
+        } catch (e) {
+            try { await tx.rollback(); } catch (_) {}
+            throw e;
         }
-
-        const rDel = await pool
-            .request()
-            .input("aplicacion_id", db.sql.BigInt, aplicacionId)
-            .query(`
-                DELETE FROM auris.aplicacion_test
-                WHERE aplicacion_id = @aplicacion_id;
-            `);
-        if (rDel.rowsAffected[0] === 0)
-            return response.json(reply.error("Aplicación no encontrada"));
-
-        logger.log(`${TAG} eliminar: OK id=${aplicacionId}`);
-        response.json(reply.ok({ aplicacion_id: aplicacionId }));
     } catch (e) {
         logger.log(`${TAG_ERR} eliminar: ${e.message}`, e);
         response.json(reply.fatal(e));

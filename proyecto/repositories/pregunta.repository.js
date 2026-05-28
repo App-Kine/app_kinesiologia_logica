@@ -221,16 +221,24 @@ async function editarPreguntaConAlternativas(preguntaId, p, creadoPorEsperado) {
 }
 
 /**
- * Soft delete (RF-68): marca activo=0. Conserva la pregunta para mantener
- * integridad de respuestas previas en evaluaciones ya realizadas.
+ * Soft delete (RF-68): marca activo=0 + limpia test_pregunta.
+ *
+ * Conserva la pregunta para mantener integridad de respuestas previas en
+ * evaluaciones ya realizadas (FK respuesta_pregunta → pregunta), pero
+ * elimina las filas de test_pregunta para que:
+ *   - la cantidad_preguntas mostrada en listar tests sea correcta
+ *   - test-detalle no muestre una fila vacía/ausente
+ *
+ * Todo va en una transacción: si algo falla, rollback completo.
  *
  * @param {number} preguntaId
  * @param {number|null} creadoPorEsperado  validación de propiedad
- * @returns {Promise<{ok:boolean, reason?:string}>}
+ * @returns {Promise<{ok:boolean, reason?:string, tests_desvinculados?:number}>}
  */
 async function eliminarPregunta(preguntaId, creadoPorEsperado) {
     const pool = db.getPool("auris");
 
+    // Check fuera de la transacción: no escribe, no compite
     const rCheck = await pool
         .request()
         .input("pregunta_id", db.sql.BigInt, preguntaId)
@@ -244,14 +252,35 @@ async function eliminarPregunta(preguntaId, creadoPorEsperado) {
         return { ok: false, reason: "FORBIDDEN" };
     }
 
-    await pool
-        .request()
-        .input("pregunta_id", db.sql.BigInt, preguntaId)
-        .query(`
-            UPDATE auris.pregunta SET activo = 0
-            WHERE pregunta_id = @pregunta_id;
-        `);
-    return { ok: true };
+    const tx = new db.sql.Transaction(pool);
+    await tx.begin();
+    try {
+        // 1) Soft-delete de la pregunta
+        await new db.sql.Request(tx)
+            .input("pregunta_id", db.sql.BigInt, preguntaId)
+            .query(`
+                UPDATE auris.pregunta SET activo = 0
+                WHERE pregunta_id = @pregunta_id;
+            `);
+
+        // 2) Cascade: desvincular de todos los tests para que el conteo
+        //    en listar y test-detalle sea consistente.
+        const rDel = await new db.sql.Request(tx)
+            .input("pregunta_id", db.sql.BigInt, preguntaId)
+            .query(`
+                DELETE FROM auris.test_pregunta
+                WHERE  pregunta_id = @pregunta_id;
+                SELECT @@ROWCOUNT AS desvinculados;
+            `);
+        const desvinculados = rDel.recordset[0]?.desvinculados || 0;
+
+        await tx.commit();
+        return { ok: true, tests_desvinculados: desvinculados };
+    } catch (e) {
+        logger.log(`${TAG_ERR} eliminarPregunta rollback: ${e.message}`, e);
+        try { await tx.rollback(); } catch (_) {}
+        throw e;
+    }
 }
 
 /**

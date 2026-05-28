@@ -122,6 +122,7 @@ async function obtenerConPreguntas(testId) {
                     p.explicacion_clinica,
                     p.audio_grid_id,
                     p.imagen_grid_id,
+                    p.video_grid_id,
                     (SELECT COUNT(*) FROM auris.alternativa a
                       WHERE a.pregunta_id = p.pregunta_id) AS cantidad_alternativas
             FROM    auris.test_pregunta tp

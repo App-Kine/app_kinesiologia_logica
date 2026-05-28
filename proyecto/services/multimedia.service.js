@@ -242,6 +242,7 @@ async function eliminar(request, response) {
     try {
         if (typeof b.arg === "string") b = JSON.parse(b.arg);
     } catch (e) {
+        logger.log(`${TAG_ERR} eliminar: arg JSON inválido — ${e.message}`);
         b = request.body || {};
     }
 
