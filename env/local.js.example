@@ -55,7 +55,23 @@ module.exports = {
         // Verifica el puerto real en el output de `npm start` del frontend.
         baseUrl: "http://localhost:4200",
     },
+    // Orígenes CORS permitidos para la subida directa de multimedia a la lógica.
+    // Vacío en desarrollo => se permiten los localhost del panel/app y Capacitor.
+    // En producción define CORS_ORIGINS (lista separada por comas).
+    corsOrigins: [],
     invitaciones: {
         expiraHoras: 24,
+    },
+    // P2.R6 — Tracking de errores en producción (opcional).
+    // Si dejas `dsn` vacío, el tracker queda desactivado y los errores van
+    // solo a logs locales. Para activarlo:
+    //   1. npm install @sentry/node
+    //   2. Crear una cuenta en https://sentry.io y obtener el DSN del proyecto.
+    //   3. Pegarlo aquí y reiniciar la lógica.
+    errorTracking: {
+        dsn: "",                              // ej. "https://xxxx@oXXXX.ingest.sentry.io/YYYY"
+        environment: "development",           // "development" | "staging" | "production"
+        tracesSampleRate: 0.0,                // 0..1 (% de transacciones tracked)
+        release: "auris@1.0.5",
     },
 };

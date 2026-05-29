@@ -12,23 +12,13 @@
 var reply = require("../../base/utils/reply");
 var mailer = require("../../base/utils/mailer");
 var evalRepo = require("../repositories/evaluacion.repository");
+// Bloque P3.R9: utilidades compartidas
+var { leerArg, RE_CORREO } = require("../../base/utils/argReader");
 
 const TAG = "\x1b[36m[evaluacion]\x1b[0m";
 const TAG_ERR = "\x1b[31m[evaluacion]\x1b[0m";
 
-const RE_CORREO = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-function _leerArg(request) {
-    try {
-        if (request.body && typeof request.body.arg === "string") {
-            return JSON.parse(request.body.arg);
-        }
-        return request.body || {};
-    } catch (e) {
-        logger.log(`${TAG_ERR} _leerArg: arg JSON inválido — ${e.message}`);
-        return {};
-    }
-}
+function _leerArg(request) { return leerArg(request, { tag: TAG_ERR }); }
 
 /** POST /evaluacion/aplicacionesActivas  body: { cursoId } */
 async function aplicacionesActivas(request, response) {

@@ -37,7 +37,12 @@ import http from "k6/http";
 import { check, sleep, fail } from "k6";
 
 // ---------- Configuración por variable de entorno ----------
+// Opción A — atacar la lógica directamente (más simple, mide solo el backend):
+//     -e BASE_URL=http://localhost:2000 -e PREFIX=/base_logica
+// Opción B — atacar el controlador (mide stack completo: proxy + lógica):
+//     (defaults)  → controlador en :3000 con prefijo /controlador_base
 const BASE_URL = __ENV.BASE_URL || "http://localhost:3000";
+const PREFIX = __ENV.PREFIX || "/controlador_base";
 const CURSO_ID = parseInt(__ENV.CURSO_ID || "1", 10);
 const THINK_TIME_MS = parseInt(__ENV.THINK_TIME_MS || "1500", 10);
 
@@ -86,7 +91,7 @@ function parseOk(res, etiqueta) {
 // ---------- Flujo principal por VU ----------
 export default function () {
     // Paso 1: aplicaciones activas del curso
-    let res = post("/base_logica/evaluacion/aplicacionesActivas", { cursoId: CURSO_ID });
+    let res = post(`${PREFIX}/evaluacion/aplicacionesActivas`, { cursoId: CURSO_ID });
     check(res, { "aplicacionesActivas 200": (r) => r.status === 200 });
     const apls = parseOk(res, "aplicacionesActivas");
     if (!Array.isArray(apls) || apls.length === 0) {
@@ -98,7 +103,7 @@ export default function () {
     sleep(THINK_TIME_MS / 1000);
 
     // Paso 2: iniciar (carga preguntas, NO persiste)
-    res = post("/base_logica/evaluacion/iniciar", {
+    res = post(`${PREFIX}/evaluacion/iniciar`, {
         aplicacionId: apl.aplicacion_id,
         modalidad: Math.random() < 0.5 ? "ANONIMA" : "IDENTIFICADA",
         correo: "carga@uv.cl",
@@ -118,7 +123,7 @@ export default function () {
         // mide carga, no calidad pedagógica)
         const alt = p.alternativas[0];
 
-        res = post("/base_logica/evaluacion/corregir", {
+        res = post(`${PREFIX}/evaluacion/corregir`, {
             aplicacionId: ev.aplicacion_id,
             preguntaId: p.pregunta_id,
             alternativaId: alt.alternativa_id,
@@ -139,7 +144,7 @@ export default function () {
         if (corr.puedeReintentar && p.alternativas.length > 1) {
             sleep(THINK_TIME_MS / 1000);
             const alt2 = p.alternativas[1];
-            res = post("/base_logica/evaluacion/corregir", {
+            res = post(`${PREFIX}/evaluacion/corregir`, {
                 aplicacionId: ev.aplicacion_id,
                 preguntaId: p.pregunta_id,
                 alternativaId: alt2.alternativa_id,
@@ -156,7 +161,7 @@ export default function () {
     sleep(THINK_TIME_MS / 1000);
 
     // Paso 4: enviar (ÚNICA operación que persiste — transacción atómica)
-    res = post("/base_logica/evaluacion/enviar", {
+    res = post(`${PREFIX}/evaluacion/enviar`, {
         aplicacionId: ev.aplicacion_id,
         modalidad: ev.modalidad,
         correo: ev.correo,

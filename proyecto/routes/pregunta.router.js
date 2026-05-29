@@ -11,5 +11,7 @@ router.post("/editarPregunta",        services.editar);
 router.post("/eliminarPregunta",      services.eliminar);
 router.post("/agregarPreguntaATest",  services.agregarATest);
 router.post("/quitarPreguntaDeTest",  services.quitarDeTest);
+// Bloque P3.R10: export del banco a CSV
+router.post("/exportarBanco",         services.exportarBanco);
 
 module.exports = router;

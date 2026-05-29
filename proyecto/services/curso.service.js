@@ -7,44 +7,25 @@
 
 var reply = require("../../base/utils/reply");
 var db = require("../../base/utils/db");
+// Bloque P3.R9: utilidades compartidas
+var { leerArg, validarLongitudes } = require("../../base/utils/argReader");
 
 const TAG = "\x1b[36m[curso]\x1b[0m";
 const TAG_ERR = "\x1b[31m[curso]\x1b[0m";
 
-function _leerArg(request) {
-    try {
-        if (request.body && typeof request.body.arg === "string") {
-            return JSON.parse(request.body.arg);
-        }
-        return request.body || {};
-    } catch (e) {
-        // arg malformado: el caller fallará en la validación de campos,
-        // pero al menos dejamos rastro en logs para diagnosticar.
-        logger.log(`${TAG_ERR} _leerArg: arg JSON inválido — ${e.message}`);
-        return {};
-    }
-}
+// Wrapper local que inyecta el TAG_ERR para mantener el contexto en logs
+function _leerArg(request) { return leerArg(request, { tag: TAG_ERR }); }
 
 /**
  * Valida longitudes de los campos de curso contra los límites del esquema SQL.
- * Devuelve mensaje de error o null si OK.
- *
- * Límites del esquema:
- *   - curso.codigo       VARCHAR(40)
- *   - curso.nombre       NVARCHAR(160)
- *   - curso.descripcion  NVARCHAR(1000)
+ * Límites: codigo VARCHAR(40), nombre NVARCHAR(160), descripcion NVARCHAR(1000).
  */
 function _validarLongitudCurso(codigo, nombre, descripcion) {
-    if (typeof codigo === "string" && codigo.length > 40) {
-        return "El código del curso no puede superar 40 caracteres";
-    }
-    if (typeof nombre === "string" && nombre.length > 160) {
-        return "El nombre del curso no puede superar 160 caracteres";
-    }
-    if (typeof descripcion === "string" && descripcion.length > 1000) {
-        return "La descripción del curso no puede superar 1000 caracteres";
-    }
-    return null;
+    return validarLongitudes([
+        { valor: codigo,      max: 40,   etiqueta: "El código del curso" },
+        { valor: nombre,      max: 160,  etiqueta: "El nombre del curso" },
+        { valor: descripcion, max: 1000, etiqueta: "La descripción del curso" },
+    ]);
 }
 
 /**

@@ -36,6 +36,30 @@ const _toMssqlConfig = (dbConf) => ({
     requestTimeout: 30000,
 });
 
+/**
+ * Abre un ConnectionPool reintentando con backoff lineal (ISO 25010 —
+ * Fiabilidad/Recuperabilidad). Si la BD aún no está lista al arrancar
+ * (típico en docker-compose donde SQL Server tarda en aceptar conexiones),
+ * no abortamos al primer fallo: reintentamos antes de propagar el error.
+ */
+const _conectarConReintentos = async (dbConf, intentos = 5, esperaBaseMs = 2000) => {
+    let ultimoError;
+    for (let i = 1; i <= intentos; i++) {
+        try {
+            return await new sql.ConnectionPool(_toMssqlConfig(dbConf)).connect();
+        } catch (e) {
+            ultimoError = e;
+            logger.log(
+                `\x1b[33m[db]\x1b[0m Pool "${dbConf.code}" intento ${i}/${intentos} falló: ${e.message}`
+            );
+            if (i < intentos) {
+                await new Promise((r) => setTimeout(r, esperaBaseMs * i));
+            }
+        }
+    }
+    throw ultimoError;
+};
+
 const initialize = async () => {
     const list = (global.config && global.config.databases) || [];
 
@@ -58,9 +82,7 @@ const initialize = async () => {
             continue;
         }
         try {
-            const pool = await new sql.ConnectionPool(
-                _toMssqlConfig(dbConf)
-            ).connect();
+            const pool = await _conectarConReintentos(dbConf);
             pools[dbConf.code] = pool;
             logger.log(
                 `\x1b[36m[db]\x1b[0m Pool "${dbConf.code}" → ${dbConf.server}:${

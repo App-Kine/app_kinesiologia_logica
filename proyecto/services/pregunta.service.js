@@ -10,28 +10,16 @@
 
 var reply = require("../../base/utils/reply");
 var preguntaRepo = require("../repositories/pregunta.repository");
+var audit = require("../repositories/auditoria.repository");
+// Bloque P3.R9: utilidades compartidas
+var { leerArg, validarLongitudes } = require("../../base/utils/argReader");
 
 const TAG = "\x1b[36m[pregunta]\x1b[0m";
 const TAG_ERR = "\x1b[31m[pregunta]\x1b[0m";
 
 const GRID_ID_RE = /^[a-fA-F0-9]{24}$/;
 
-/**
- * El controlador envía el body como `arg=<JSON urlencoded>`. Desempacamos
- * para obtener los params reales. Si llega JSON puro (test directo), también
- * funciona.
- */
-function _leerArg(request) {
-    try {
-        if (request.body && typeof request.body.arg === "string") {
-            return JSON.parse(request.body.arg);
-        }
-        return request.body || {};
-    } catch (e) {
-        logger.log(`${TAG_ERR} _leerArg: arg JSON inválido — ${e.message}`);
-        return {};
-    }
-}
+function _leerArg(request) { return leerArg(request, { tag: TAG_ERR }); }
 
 function _validarAlternativas(alternativas) {
     if (!Array.isArray(alternativas)) {
@@ -65,22 +53,12 @@ function _validarAlternativas(alternativas) {
     return null;
 }
 
-/**
- * Valida longitudes de los campos de texto de pregunta contra los
- * límites del esquema SQL. Devuelve mensaje o null si OK.
- *
- * Límites del esquema:
- *   - pregunta.enunciado            NVARCHAR(2000)
- *   - pregunta.explicacion_clinica  NVARCHAR(4000)
- */
+/** Límites: enunciado NVARCHAR(2000), explicacion_clinica NVARCHAR(4000). */
 function _validarLongitudPregunta(enunciado, explicacionClinica) {
-    if (typeof enunciado === "string" && enunciado.length > 2000) {
-        return "El enunciado no puede superar 2000 caracteres";
-    }
-    if (typeof explicacionClinica === "string" && explicacionClinica.length > 4000) {
-        return "La explicación clínica no puede superar 4000 caracteres";
-    }
-    return null;
+    return validarLongitudes([
+        { valor: enunciado,          max: 2000, etiqueta: "El enunciado" },
+        { valor: explicacionClinica, max: 4000, etiqueta: "La explicación clínica" },
+    ]);
 }
 
 async function crear(request, response) {
@@ -237,11 +215,38 @@ async function editar(request, response) {
 
         if (!res.ok) {
             logger.log(`${TAG} editar: no se actualizó (${res.reason})`);
+            // P2.R8: si está bloqueada por evaluaciones finalizadas, sugerimos clonar.
+            if (res.reason === "LOCKED") {
+                return response.json(reply.error(
+                    `Esta pregunta ya tiene ${res.evaluacionesFinalizadas} evaluación(es) `
+                    + `finalizada(s) y no puede modificarse. Duplica la pregunta y edita la copia.`
+                ));
+            }
             const msg =
                 res.reason === "FORBIDDEN"
                     ? "Solo el creador puede editar esta pregunta"
                     : "Pregunta no encontrada";
             return response.json(reply.error(msg));
+        }
+
+        // P2.R8: registrar auditoría con before/after de los campos textuales.
+        const cambios = audit.diff(res.antes, {
+            enunciado: b.enunciado,
+            explicacion_clinica: b.explicacionClinica,
+            audio_grid_id: b.audioGridId || null,
+            imagen_grid_id: b.imagenGridId || null,
+            video_grid_id: b.videoGridId || null,
+        }, ["enunciado","explicacion_clinica","audio_grid_id","imagen_grid_id","video_grid_id"]);
+
+        if (Object.keys(cambios).length > 0) {
+            await audit.registrar({
+                usuarioId: creadoPor,
+                accion: "PREGUNTA_EDITADA",
+                entidad: "pregunta",
+                entidadId: preguntaId,
+                detalle: { cambios, alternativas_reemplazadas: true },
+                ipOrigen: request.ip || null,
+            });
         }
 
         logger.log(`${TAG} editar: OK pregunta_id=${preguntaId}`);
@@ -276,6 +281,16 @@ async function eliminar(request, response) {
                     : "Pregunta no encontrada";
             return response.json(reply.error(msg));
         }
+
+        // P2.R8: registrar la eliminación en el log de auditoría.
+        await audit.registrar({
+            usuarioId: creadoPor,
+            accion: "PREGUNTA_ELIMINADA",
+            entidad: "pregunta",
+            entidadId: preguntaId,
+            detalle: { tests_desvinculados: res.tests_desvinculados || 0 },
+            ipOrigen: request.ip || null,
+        });
 
         logger.log(`${TAG} eliminar: OK pregunta_id=${preguntaId} tests_desvinculados=${res.tests_desvinculados || 0}`);
         response.json(reply.ok({
@@ -370,6 +385,69 @@ async function quitarDeTest(request, response) {
     }
 }
 
+/* =============================================================================
+   Export del banco a CSV (Bloque P3.R10 — auditoría ISO 25010, reemplazabilidad).
+   GET /preguntas/exportarBanco?profesorId=...
+   Devuelve text/csv listo para descarga. Una fila por alternativa.
+   ============================================================================= */
+
+function _csvEscape(s) {
+    if (s == null) return "";
+    const str = String(s);
+    if (/[",\n\r]/.test(str)) {
+        return '"' + str.replace(/"/g, '""') + '"';
+    }
+    return str;
+}
+
+async function exportarBanco(request, response) {
+    const b = _leerArg(request);
+    const profesorId = b.profesorId ? Number(b.profesorId) : null;
+    logger.log(`${TAG} exportarBanco: profesorId=${profesorId || 'todos'}`);
+    try {
+        const data = await preguntaRepo.exportarBanco(profesorId);
+        const cols = [
+            "pregunta_id", "enunciado", "explicacion_clinica",
+            "curso_codigo", "audio_grid_id", "imagen_grid_id", "video_grid_id",
+            "creado_por_correo", "created_at", "updated_at",
+            "alt_orden", "alt_texto", "es_correcta",
+        ];
+        const lines = [cols.join(",")];
+        for (const p of data) {
+            const alts = p.alternativas || [];
+            if (alts.length === 0) {
+                lines.push(cols.map((c) => _csvEscape(p[c])).join(","));
+            } else {
+                for (const a of alts) {
+                    lines.push([
+                        _csvEscape(p.pregunta_id),
+                        _csvEscape(p.enunciado),
+                        _csvEscape(p.explicacion_clinica),
+                        _csvEscape(p.curso_codigo),
+                        _csvEscape(p.audio_grid_id),
+                        _csvEscape(p.imagen_grid_id),
+                        _csvEscape(p.video_grid_id),
+                        _csvEscape(p.creado_por_correo),
+                        _csvEscape(p.created_at),
+                        _csvEscape(p.updated_at),
+                        _csvEscape(a.orden),
+                        _csvEscape(a.texto),
+                        _csvEscape(a.es_correcta ? "1" : "0"),
+                    ].join(","));
+                }
+            }
+        }
+        const csv = "﻿" + lines.join("\n");
+        const filename = `auris_banco_${new Date().toISOString().slice(0,10)}.csv`;
+        response.setHeader("Content-Type", "text/csv; charset=utf-8");
+        response.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+        response.send(csv);
+    } catch (e) {
+        logger.log(`${TAG_ERR} exportarBanco: ${e.message}`, e);
+        response.json(reply.fatal(e));
+    }
+}
+
 module.exports = {
     crear,
     listar,
@@ -378,4 +456,5 @@ module.exports = {
     eliminar,
     agregarATest,
     quitarDeTest,
+    exportarBanco,
 };

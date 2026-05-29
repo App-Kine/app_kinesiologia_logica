@@ -11,38 +11,21 @@
 var reply = require("../../base/utils/reply");
 var db = require("../../base/utils/db");
 var testRepo = require("../repositories/test.repository");
+var audit = require("../repositories/auditoria.repository");
+// Bloque P3.R9: utilidades compartidas
+var { leerArg, validarLongitudes } = require("../../base/utils/argReader");
 
 const TAG = "\x1b[36m[test]\x1b[0m";
 const TAG_ERR = "\x1b[31m[test]\x1b[0m";
 
-function _leerArg(request) {
-    try {
-        if (request.body && typeof request.body.arg === "string") {
-            return JSON.parse(request.body.arg);
-        }
-        return request.body || {};
-    } catch (e) {
-        logger.log(`${TAG_ERR} _leerArg: arg JSON inválido — ${e.message}`);
-        return {};
-    }
-}
+function _leerArg(request) { return leerArg(request, { tag: TAG_ERR }); }
 
-/**
- * Valida longitudes contra los límites del esquema SQL (test).
- * Devuelve un mensaje de error o null si todo OK.
- *
- * Límites del esquema:
- *   - test.nombre        NVARCHAR(200)
- *   - test.descripcion   NVARCHAR(1000)
- */
+/** Límites: test.nombre NVARCHAR(200), test.descripcion NVARCHAR(1000). */
 function _validarLongitud(nombre, descripcion) {
-    if (typeof nombre === "string" && nombre.length > 200) {
-        return "El nombre del test no puede superar 200 caracteres";
-    }
-    if (typeof descripcion === "string" && descripcion.length > 1000) {
-        return "La descripción del test no puede superar 1000 caracteres";
-    }
-    return null;
+    return validarLongitudes([
+        { valor: nombre,      max: 200,  etiqueta: "El nombre del test" },
+        { valor: descripcion, max: 1000, etiqueta: "La descripción del test" },
+    ]);
 }
 
 function _validarComposicion(preguntas) {
@@ -200,8 +183,9 @@ async function editar(request, response) {
             .request()
             .input("test_id", db.sql.BigInt, testId)
             .query(`
-                SELECT creado_por, activo FROM auris.test
-                WHERE test_id = @test_id;
+                SELECT creado_por, activo, nombre, descripcion, orden_aleatorio
+                FROM   auris.test
+                WHERE  test_id = @test_id;
             `);
         if (rCheck.recordset.length === 0)
             return response.json(reply.error("Test no encontrado"));
@@ -209,6 +193,8 @@ async function editar(request, response) {
             return response.json(reply.error("El test está inactivo"));
         if (Number(rCheck.recordset[0].creado_por) !== creadoPor)
             return response.json(reply.error("Solo el creador puede editar este test"));
+
+        const antes = rCheck.recordset[0];
 
         await pool
             .request()
@@ -223,6 +209,21 @@ async function editar(request, response) {
                        orden_aleatorio = @orden_aleatorio
                 WHERE  test_id = @test_id;
             `);
+
+        // P2.R8: registrar auditoría con before/after.
+        const cambios = audit.diff(antes, {
+            nombre, descripcion, orden_aleatorio: ordenAleatorio,
+        }, ["nombre","descripcion","orden_aleatorio"]);
+        if (Object.keys(cambios).length > 0) {
+            await audit.registrar({
+                usuarioId: creadoPor,
+                accion: "TEST_EDITADO",
+                entidad: "test",
+                entidadId: testId,
+                detalle: { cambios },
+                ipOrigen: request.ip || null,
+            });
+        }
 
         logger.log(`${TAG} editar: OK testId=${testId}`);
         response.json(reply.ok({ test_id: testId }));
@@ -297,6 +298,17 @@ async function eliminar(request, response) {
                 : 0;
 
             await tx.commit();
+
+            // P2.R8: registrar la eliminación + cascade en auditoría.
+            await audit.registrar({
+                usuarioId: creadoPor,
+                accion: "TEST_ELIMINADO",
+                entidad: "test",
+                entidadId: testId,
+                detalle: { aplicaciones_desactivadas: afectadas },
+                ipOrigen: request.ip || null,
+            });
+
             logger.log(`${TAG} eliminar: OK testId=${testId} aplicaciones desactivadas=${afectadas}`);
             response.json(reply.ok({
                 test_id: testId,
