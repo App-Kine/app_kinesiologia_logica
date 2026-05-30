@@ -17,5 +17,6 @@ module.exports = (app, rootPath) => {
     app.use(`/${rootPath}/`, require("./proyecto/routes/multimedia.router"));
     app.use(`/${rootPath}/`, require("./proyecto/routes/evaluacion.router"));
     app.use(`/${rootPath}/`, require("./proyecto/routes/password.router"));
+    app.use(`/${rootPath}/`, require("./proyecto/routes/usuario.router"));
 
 };

@@ -372,8 +372,8 @@ Luego repite el paso 3 (aplicar los 2 SQL).
 | `app_kinesiologia_logica/database/mongodb/init_mongo.js` | Crea buckets GridFS |
 | `app_kinesiologia_logica/database/SETUP.md` | Setup detallado de BD con Docker (alternativa para Mac) |
 | `app_kinesiologia_logica/database/mongodb/SETUP_MONGO.md` | Setup detallado de Mongo |
-| `app_kinesiologia_logica/database/AurisDB_dump.sql` | (legacy) Esquema viejo + seeds antiguos — no usar |
-| `app_kinesiologia_logica/database/2026-05-28_limpiar_y_reseedear.sql` | (legacy) Migraciones + limpieza — incluidas en INSTALL.sql |
+| `app_kinesiologia_logica/database/PROD_db_user.sql` | (producción) Usuario de BD con privilegios mínimos |
+| `app_kinesiologia_logica/database/PROD_superadmin.sql` | (producción) Seed del superadmin con clave fuerte |
 
 ---
 

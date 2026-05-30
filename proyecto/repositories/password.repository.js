@@ -88,10 +88,56 @@ async function aplicarNuevaPassword(resetId, usuarioId, passwordHash) {
     }
 }
 
+/** Usuario interno por id (hash actual + activo). Null si no existe. */
+async function obtenerPorId(usuarioId) {
+    const r = await db
+        .request("auris")
+        .input("usuario_id", db.sql.BigInt, usuarioId)
+        .query(`
+            SELECT usuario_id, password_hash, activo
+            FROM   auris.usuario
+            WHERE  usuario_id = @usuario_id;
+        `);
+    return r.recordset[0] || null;
+}
+
+/**
+ * Cambia la contraseña del usuario autenticado e invalida cualquier token de
+ * reset pendiente (por seguridad), en una transacción.
+ */
+async function cambiarPasswordPorId(usuarioId, passwordHash) {
+    const pool = db.getPool("auris");
+    const tx = new db.sql.Transaction(pool);
+    await tx.begin();
+    try {
+        await new db.sql.Request(tx)
+            .input("usuario_id", db.sql.BigInt, usuarioId)
+            .input("password_hash", db.sql.NVarChar(255), passwordHash)
+            .query(`
+                UPDATE auris.usuario
+                SET    password_hash = @password_hash
+                WHERE  usuario_id = @usuario_id;
+            `);
+        await new db.sql.Request(tx)
+            .input("usuario_id", db.sql.BigInt, usuarioId)
+            .query(`
+                UPDATE auris.password_reset
+                SET    usado_en = SYSUTCDATETIME()
+                WHERE  usuario_id = @usuario_id AND usado_en IS NULL;
+            `);
+        await tx.commit();
+    } catch (e) {
+        try { await tx.rollback(); } catch (_) {}
+        throw e;
+    }
+}
+
 module.exports = {
     buscarUsuarioActivoPorCorreo,
     invalidarResetsPrevios,
     crearReset,
     buscarPorTokenHash,
     aplicarNuevaPassword,
+    obtenerPorId,
+    cambiarPasswordPorId,
 };

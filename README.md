@@ -91,10 +91,11 @@ app_kinesiologia_logica/
 │   ├── services/               # validación, JWT, bcrypt, orquestación
 │   └── repositories/           # ÚNICA capa que hace queries SQL/Mongo
 ├── database/
-│   ├── AurisDB_dump.sql        # schema + datos seed (canónico)
-│   ├── 2026-05-25_*.sql        # migraciones incrementales
-│   ├── 2026-05-26_video_y_timing.sql
+│   ├── AurisDB_INSTALL.sql     # instalación completa (schema + seed), idempotente — CANÓNICO
+│   ├── PROD_db_user.sql        # usuario de BD con privilegios mínimos (producción)
+│   ├── PROD_superadmin.sql     # seed del superadmin para producción (clave fuerte)
 │   ├── mongodb/init_mongo.js   # init de buckets GridFS
+│   ├── BACKUP.md               # estrategia de backup/restore
 │   └── SETUP.md                # guía paso a paso de la BD
 ├── env/
 │   ├── development.js          # defaults compartibles
@@ -122,10 +123,10 @@ docker run -e "ACCEPT_EULA=Y" -e "MSSQL_SA_PASSWORD=Martin131*" \
 docker run -p 27017:27017 --name auris-mongo -d mongo:6
 ```
 
-### 2. Restaurar el dump
+### 2. Instalar la base de datos
 
-Usá Azure Data Studio, DBeaver o sqlcmd para correr `database/AurisDB_dump.sql` contra el servidor.
-Después corré las migraciones cronológicamente (`2026-05-25_*.sql`, `2026-05-26_*.sql`).
+Usá Azure Data Studio, DBeaver o sqlcmd para correr `database/AurisDB_INSTALL.sql` contra el servidor.
+Es un único script **idempotente** (crea esquema + datos seed; podés correrlo varias veces sin duplicar).
 Detalle paso a paso: [`database/SETUP.md`](./database/SETUP.md).
 
 ### 3. Inicializar buckets de Mongo
@@ -290,7 +291,7 @@ Todos bajo `http://localhost:2000/base_logica/`.
 - **No commitear `package-lock.json`** (está en `.gitignore`).
 - **No commitear `env/local.js`** ni nada con secrets.
 - Mantener los `env/local.js.example` actualizados cuando agregás un nuevo bloque de config.
-- Cualquier cambio de schema SQL va como migración nueva en `database/YYYY-MM-DD_descripcion.sql`. **No editar `AurisDB_dump.sql` para fixes incrementales.**
+- Los cambios de schema SQL se consolidan en `database/AurisDB_INSTALL.sql` (script único e idempotente; mantenelo como fuente de verdad del esquema).
 - El JWT secret en este repo **debe coincidir EXACTAMENTE** con el del controlador.
 
 ---
@@ -298,4 +299,4 @@ Todos bajo `http://localhost:2000/base_logica/`.
 ## 📌 Referencias
 
 - SRS / casos de uso: `database/SETUP.md` y los comentarios `RF-XX` en el código apuntan al documento de requisitos.
-- Migración SQL más reciente: `database/2026-05-26_video_y_timing.sql` (agrega `pregunta.video_grid_id` y `respuesta_pregunta.tiempo_segundos`).
+- Esquema y datos seed: `database/AurisDB_INSTALL.sql` (script único e idempotente).

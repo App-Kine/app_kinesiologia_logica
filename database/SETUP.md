@@ -1,6 +1,7 @@
 # Setup de la base de datos AurisDB (para nuevos colaboradores)
 
-Esta guía levanta SQL Server en tu máquina y restaura el dump compartido.
+Esta guía levanta SQL Server en tu máquina y crea la base de datos con el
+instalador canónico (`AurisDB_INSTALL.sql`).
 
 ## Requisitos
 
@@ -32,15 +33,14 @@ sleep 15 && docker logs sqlserver | tail -10
 # debe terminar con: "SQL Server is now ready for client connections"
 ```
 
-## 2. Restaurar el dump
+## 2. Instalar la base de datos
 
-Desde la carpeta del repo de la lógica:
+`AurisDB_INSTALL.sql` es un único script **idempotente** que crea el esquema y
+los datos seed (podés correrlo varias veces sin duplicar). Desde la carpeta del
+repo de la lógica:
 
 ```bash
 cd app_kinesiologia_logica
-
-# Copiar el dump dentro del contenedor
-docker cp database/AurisDB_dump.sql sqlserver:/tmp/AurisDB_dump.sql
 
 # Ejecutarlo con un contenedor sidecar que trae sqlcmd
 docker run --rm \
@@ -49,7 +49,7 @@ docker run --rm \
     mcr.microsoft.com/mssql-tools \
     /opt/mssql-tools/bin/sqlcmd \
     -S localhost,1433 -U sa -P 'TuPasswordSegura!2026' -C \
-    -i /scripts/AurisDB_dump.sql
+    -i /scripts/AurisDB_INSTALL.sql
 ```
 
 La primera vez Docker descarga la imagen `mssql-tools` (~150 MB).
