@@ -1,6 +1,6 @@
 # MongoDB (multimedia) · Setup
 
-Auris guarda **audios e imágenes de las preguntas** en MongoDB GridFS.
+Auris guarda **audios, imágenes y videos de las preguntas** en MongoDB GridFS.
 Los datos relacionales siguen en SQL Server; aquí solo viven los binarios.
 
 ## 1. Tener MongoDB corriendo
@@ -32,8 +32,9 @@ mongosh "mongodb://localhost:27017/auris_media" database/mongodb/init_mongo.js
 
 > Si usas Atlas, reemplaza la URI por la tuya + `/auris_media` al final.
 
-Esto crea los buckets `fs_audios` y `fs_imagenes` con índices y validadores
-de tamaño/MIME (RNF-38 y RNF-39). Es idempotente: puedes correrlo varias veces.
+Esto crea los buckets `fs_audios`, `fs_imagenes` y `fs_videos` con índices y
+validadores de tamaño/MIME (RNF-38 y RNF-39). Es idempotente: puedes correrlo
+varias veces.
 
 ## 3. Configurar la conexión en el backend
 
@@ -49,7 +50,7 @@ mongo: {
 Reinicia la lógica (`npm run dev-unix`). En consola verás:
 
 ```
-[mongo] Conectado a auris_media (fs_audios, fs_imagenes)
+[mongo] Conectado a auris_media (fs_audios, fs_imagenes, fs_videos)
 ```
 
 ## 4. Límites enforced
@@ -58,6 +59,7 @@ Reinicia la lógica (`npm run dev-unix`). En consola verás:
 |------|----------|-----------|-----------------|
 | Audio | MP3, WAV | 10 MB | multer (HTTP) + MIME + validador Mongo |
 | Imagen | JPG, PNG | 2 MB (RNF-39) | multer (HTTP) + MIME + validador Mongo |
+| Video | MP4, WebM, MOV | 50 MB | multer (HTTP) + MIME + validador Mongo |
 
 ## 5. Endpoints (en la lógica, puerto 2000)
 
@@ -65,9 +67,12 @@ Reinicia la lógica (`npm run dev-unix`). En consola verás:
 |--------|------|------|----------|
 | POST | `/base_logica/multimedia/subirAudio` | JWT profesor | Sube audio, devuelve `grid_id` |
 | POST | `/base_logica/multimedia/subirImagen` | JWT profesor | Sube imagen, devuelve `grid_id` |
+| POST | `/base_logica/multimedia/subirVideo` | JWT profesor | Sube video, devuelve `grid_id` |
 | GET | `/base_logica/multimedia/audio/:id` | público | Streaming del audio (para el estudiante) |
 | GET | `/base_logica/multimedia/imagen/:id` | público | Streaming de la imagen |
+| GET | `/base_logica/multimedia/video/:id` | público | Streaming del video |
 | POST | `/base_logica/multimedia/eliminar` | JWT profesor | Borra un archivo por grid_id + tipo |
 
 El `grid_id` devuelto se guarda en `auris.pregunta.audio_grid_id` /
-`imagen_grid_id` (SQL Server). Así se enlaza la multimedia con la pregunta.
+`imagen_grid_id` / `video_grid_id` (SQL Server). Así se enlaza la multimedia con
+la pregunta.

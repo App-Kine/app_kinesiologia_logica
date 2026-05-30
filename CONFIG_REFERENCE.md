@@ -129,8 +129,9 @@ A dónde reenvía cada llamada el controlador.
 
 | Campo | Tipo | Default | Notas |
 |---|---|---|---|
-| `jwtSecret` | string | — | **DEBE coincidir con `security.jwtSecret` de la lógica.** |
-| `jwtAccessExpiresIn` | string | `"8h"` | Igual a la lógica. |
+| `jwtSecret` | string | — | **DEBE coincidir con `security.jwtSecret` de la lógica.** Algoritmo fijado HS256. |
+| `param_base_jwt_password` | string | — | Misma clave (la usa `readToken.js` para verificar). Debe igualar a `jwtSecret`. |
+| `corsOrigins` | string[] | `[]` | Orígenes CORS permitidos. En prod vía env `CORS_ORIGINS` (lista separada por comas). |
 
 ## Variables de los FRONTENDS
 
@@ -141,8 +142,8 @@ Los frontends no usan `env/local.js`. Usan `environment.ts` y `environment.prod.
 | Campo | Tipo | Default | Notas |
 |---|---|---|---|
 | `production` | bool | `false` | `true` en `environment.prod.ts`. |
-| `apiUrl` | string | `"http://localhost:3000/controlador_base/"` | URL del controlador. |
-| `LOGICA_API_URL` | string | `"http://localhost:2000/base_logica/"` | Para multimedia GET directo. |
+| `BASE_API_URL` | string | `"http://localhost:3023/controlador_base/"` | URL del controlador. En `environment.prod.ts` se reemplaza por el dominio **HTTPS** real. |
+| `LOGICA_API_URL` | string | `"http://localhost:2000/base_logica/"` | Para multimedia GET directo. En prod, dominio HTTPS. |
 
 ### `app_kinesiologia_frontend/src/environments/environment.ts`
 
@@ -153,8 +154,12 @@ Igual al panel.
 | Variable | Cómo se setea | Notas |
 |---|---|---|
 | `NODE_ENV` | `npm run dev-unix` la setea a `"development"` | Detectada por `loadConfig`. |
-| Password SA SQL Server | Al instalar SQL Server | Debe coincidir con `localDatabases[0].password`. |
-| Password Mongo (opcional) | `--auth` al iniciar mongod | Sumar a `mongo.uri` con `mongodb://user:pass@...`. |
+| `JWT_SECRET` | env var del servidor en producción | Clave HS256; **misma** en controlador y lógica. |
+| `CORS_ORIGINS` | env var del servidor en producción | Lista de orígenes permitidos separada por comas. Ej: `https://panel.auris.cl,https://app.auris.cl`. |
+| `DB_HOST` / `DB_PORT` / `DB_USER` / `DB_PASS` / `DB_NAME` | env vars del servidor (lógica) | Conexión a SQL Server en prod (usar el usuario `auris_app`, no `sa`). |
+| `MONGO_URI` / `MONGO_DB` | env vars del servidor (lógica) | Conexión a MongoDB en prod. |
+| `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` | env vars del servidor (lógica) | Envío de correos en prod. |
+| Password SA SQL Server | Al instalar SQL Server | Solo dev; en prod usar el usuario de privilegios mínimos. |
 
 ## Reglas operacionales
 

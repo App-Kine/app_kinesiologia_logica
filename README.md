@@ -56,8 +56,9 @@ Auris está partido en **4 repos**:
 - **SQL Server 2019+** (vía Docker en local) — driver `mssql`
 - **MongoDB 6+** + GridFS — driver `mongodb` (multimedia)
 - **nodemailer** + Gmail SMTP (invitaciones, recuperación de password, informes)
-- **jsonwebtoken** + **bcryptjs** (auth)
+- **jsonwebtoken v9** (firma/verifica con algoritmo fijado **HS256**) + **bcryptjs** (auth)
 - **multer** (uploads de archivos directos a la lógica)
+- **CORS por allowlist** (`CORS_ORIGINS`) para la subida directa de multimedia desde el frontend
 
 ---
 
@@ -76,10 +77,11 @@ app_kinesiologia_logica/
 │       ├── logConsola.js       # logger global
 │       └── loadConfig.js       # carga env/local|development|production.js
 ├── proyecto/
-│   ├── routes/                 # 11 routers Express
+│   ├── routes/                 # 12 routers Express
 │   │   ├── auth.router.js
 │   │   ├── invitacion.router.js
-│   │   ├── password.router.js
+│   │   ├── password.router.js    # solicitarReset, resetearPassword, cambiarPassword
+│   │   ├── usuario.router.js      # listarUsuarios, cambiarEstadoUsuario (admin)
 │   │   ├── curso.router.js
 │   │   ├── pregunta.router.js
 │   │   ├── test.router.js
@@ -264,11 +266,16 @@ find proyecto base -name "*.js" -not -path "*/node_modules/*" \
 
 Todos bajo `http://localhost:2000/base_logica/`.
 
-**Públicos** (sin JWT): `auth/*`, `evaluacion/*`, `invitacion/verificar*`, `invitacion/completar*`, `password/*`, `multimedia/audio/:id`, `multimedia/imagen/:id`, `multimedia/video/:id`
+> El control de auth/rol lo aplica el **controlador** antes de reenviar acá (la
+> lógica es interna). La columna "Auth" describe esa exigencia.
 
-**Requieren JWT PROFESOR**: `pregunta/*`, `test/*`, `aplicacion/*`, `curso/*`, `analitica/*`, `multimedia/subir*`, `multimedia/eliminar`
+**Públicos** (sin JWT): `login`, `evaluacion/*`, `verificarInvitacion`, `completarInvitacion`, `solicitarReset`, `resetearPassword`, `multimedia/audio|imagen|video/:id`
 
-**Requieren JWT SUPERADMIN**: `invitacion/crear`, `invitacion/listar`
+**Requieren JWT (usuario logueado)**: `cambiarPassword`
+
+**Requieren JWT PROFESOR**: `pregunta/*`, `test/*`, `aplicacion/*`, `cursos/*`, `analitica/*`, `multimedia/subir*`, `multimedia/eliminar`
+
+**Requieren JWT SUPERADMIN**: `crearInvitacion`, `listarInvitaciones`, `listarUsuarios`, `cambiarEstadoUsuario`
 
 ---
 
@@ -300,3 +307,5 @@ Todos bajo `http://localhost:2000/base_logica/`.
 
 - SRS / casos de uso: `database/SETUP.md` y los comentarios `RF-XX` en el código apuntan al documento de requisitos.
 - Esquema y datos seed: `database/AurisDB_INSTALL.sql` (script único e idempotente).
+- **Producción / seguridad:** [`SEGURIDAD_PRODUCCION.md`](./SEGURIDAD_PRODUCCION.md) — checklist de handoff para DTIC (HTTPS, secretos, usuario de BD `PROD_db_user.sql`, seed `PROD_superadmin.sql`).
+- Variables de entorno: [`CONFIG_REFERENCE.md`](./CONFIG_REFERENCE.md). Setup completo: [`SETUP_COMPLETO.md`](./SETUP_COMPLETO.md).
