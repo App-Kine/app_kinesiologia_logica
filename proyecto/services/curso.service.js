@@ -237,6 +237,12 @@ async function obtenerConAplicaciones(request, response) {
             return response.json(reply.error("Curso no encontrado"));
         }
 
+        // Filtro defensivo (2026-05-26):
+        //   - t.activo = 1: nunca mostramos aplicaciones cuyo test ya fue
+        //     eliminado. Esto limpia el caso histórico donde el test se
+        //     eliminó sin cascade y dejó la aplicación "zombie".
+        //   El listado SÍ incluye aplicaciones activas e inactivas, para que
+        //   el profesor pueda re-activar una que pausó manualmente.
         const rApls = await pool
             .request()
             .input("curso_id", db.sql.BigInt, cursoId)
@@ -257,6 +263,7 @@ async function obtenerConAplicaciones(request, response) {
                 JOIN    auris.test t ON t.test_id = apl.test_id
                 LEFT JOIN auris.usuario u ON u.usuario_id = apl.profesor_id
                 WHERE   apl.curso_id = @curso_id
+                  AND   t.activo = 1
                 ORDER BY apl.created_at DESC;
             `);
 

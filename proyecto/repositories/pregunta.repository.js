@@ -37,15 +37,16 @@ async function crearPreguntaConAlternativas(p) {
             .input("explicacion_clinica", db.sql.NVarChar(4000), p.explicacionClinica)
             .input("audio_grid_id", db.sql.VarChar(24), p.audioGridId || null)
             .input("imagen_grid_id", db.sql.VarChar(24), p.imagenGridId || null)
+            .input("video_grid_id", db.sql.VarChar(24), p.videoGridId || null)
             .input("creado_por", db.sql.BigInt, p.creadoPor)
             .input("curso_origen_id", db.sql.BigInt, p.cursoOrigenId || null)
             .query(`
                 INSERT INTO auris.pregunta
                     (enunciado, explicacion_clinica, audio_grid_id,
-                     imagen_grid_id, creado_por, curso_origen_id)
+                     imagen_grid_id, video_grid_id, creado_por, curso_origen_id)
                 OUTPUT INSERTED.pregunta_id
                 VALUES (@enunciado, @explicacion_clinica, @audio_grid_id,
-                        @imagen_grid_id, @creado_por, @curso_origen_id);
+                        @imagen_grid_id, @video_grid_id, @creado_por, @curso_origen_id);
             `);
         const preguntaId = r.recordset[0].pregunta_id;
 
@@ -87,6 +88,7 @@ async function listarPorProfesor(profesorId) {
                     c.nombre        AS curso_nombre,
                     p.audio_grid_id,
                     p.imagen_grid_id,
+                    p.video_grid_id,
                     p.activo,
                     p.created_at,
                     p.updated_at,
@@ -140,12 +142,14 @@ async function editarPreguntaConAlternativas(preguntaId, p, creadoPorEsperado) {
             .input("explicacion_clinica", db.sql.NVarChar(4000), p.explicacionClinica)
             .input("audio_grid_id", db.sql.VarChar(24), p.audioGridId || null)
             .input("imagen_grid_id", db.sql.VarChar(24), p.imagenGridId || null)
+            .input("video_grid_id", db.sql.VarChar(24), p.videoGridId || null)
             .query(`
                 UPDATE auris.pregunta
                 SET    enunciado = @enunciado,
                        explicacion_clinica = @explicacion_clinica,
                        audio_grid_id = @audio_grid_id,
-                       imagen_grid_id = @imagen_grid_id
+                       imagen_grid_id = @imagen_grid_id,
+                       video_grid_id = @video_grid_id
                 WHERE  pregunta_id = @pregunta_id;
             `);
 
@@ -261,7 +265,7 @@ async function obtenerConAlternativas(preguntaId) {
         .input("pregunta_id", db.sql.BigInt, preguntaId)
         .query(`
             SELECT  pregunta_id, enunciado, explicacion_clinica,
-                    audio_grid_id, imagen_grid_id,
+                    audio_grid_id, imagen_grid_id, video_grid_id,
                     creado_por, curso_origen_id, clonada_de_id,
                     activo, created_at, updated_at
             FROM    auris.pregunta

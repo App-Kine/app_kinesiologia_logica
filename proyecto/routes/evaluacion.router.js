@@ -14,5 +14,6 @@ router.post("/evaluacion/iniciar",             services.iniciar);
 router.post("/evaluacion/responder",           services.responder);
 router.post("/evaluacion/finalizar",           services.finalizar);
 router.post("/evaluacion/enviarInforme",       services.enviarInforme);
+router.post("/evaluacion/informeCompleto",     services.informeCompleto);
 
 module.exports = router;

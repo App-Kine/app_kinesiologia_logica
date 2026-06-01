@@ -96,7 +96,8 @@ async function cargarPreguntas(testId, ordenAleatorio) {
             SELECT  tp.pregunta_id,
                     p.enunciado,
                     p.audio_grid_id,
-                    p.imagen_grid_id
+                    p.imagen_grid_id,
+                    p.video_grid_id
             FROM    auris.test_pregunta tp
             JOIN    auris.pregunta p ON p.pregunta_id = tp.pregunta_id
             WHERE   tp.test_id = @test_id
@@ -138,6 +139,7 @@ async function cargarPreguntas(testId, ordenAleatorio) {
         enunciado: p.enunciado,
         audio_grid_id: p.audio_grid_id,
         imagen_grid_id: p.imagen_grid_id,
+        video_grid_id: p.video_grid_id,
         alternativas: altsPorPregunta[String(p.pregunta_id)] || [],
     }));
 }
@@ -201,9 +203,16 @@ async function _respuestaExistente(evaluacionId, preguntaId) {
 
 /**
  * Registra un intento de respuesta. Toda la lógica de 2 intentos vive acá.
+ *
+ * `tiempoSegundos` (opcional, pedido cliente 2026-05-26): segundos que el
+ * estudiante estuvo EN la pregunta antes de confirmar este intento. Solo
+ * lo persistimos cuando este intento finaliza la pregunta (acierto en 1°,
+ * acierto en 2°, o incorrecta tras 2 intentos), porque ese es el tiempo
+ * "total dedicado a la pregunta" que tiene sentido para el informe/analítica.
+ *
  * @returns objeto con el resultado del intento (ver evaluacion.service).
  */
-async function registrarRespuesta(evaluacionId, preguntaId, alternativaId, intento, ordenPresentacion) {
+async function registrarRespuesta(evaluacionId, preguntaId, alternativaId, intento, ordenPresentacion, tiempoSegundos) {
     const corr = await _datosCorreccion(preguntaId, alternativaId);
     if (!corr) {
         const e = new Error("La alternativa no pertenece a la pregunta");
@@ -213,13 +222,20 @@ async function registrarRespuesta(evaluacionId, preguntaId, alternativaId, inten
 
     const previa = await _respuestaExistente(evaluacionId, preguntaId);
 
+    // Helper: solo guardamos tiempo cuando la pregunta queda finalizada.
+    const tiempoFinal = (tiempoSegundos != null && tiempoSegundos >= 0)
+        ? Math.round(Number(tiempoSegundos))
+        : null;
+
     if (intento === 1) {
         if (previa) {
             const e = new Error("La pregunta ya fue respondida (RF-26)");
             e.code = "YA_RESPONDIDA";
             throw e;
         }
-        const resultado = corr.esCorrecta ? "CORRECTA_INT1" : null; // null = aún no finalizada
+        const finalizada = corr.esCorrecta;
+        const resultado = finalizada ? "CORRECTA_INT1" : null; // null = aún no finalizada
+        const tiempoCol = finalizada ? tiempoFinal : null;
         await db
             .request("auris")
             .input("evaluacion_id", db.sql.BigInt, evaluacionId)
@@ -228,16 +244,16 @@ async function registrarRespuesta(evaluacionId, preguntaId, alternativaId, inten
             .input("alt1", db.sql.BigInt, alternativaId)
             .input("correcta1", db.sql.Bit, corr.esCorrecta ? 1 : 0)
             .input("resultado", db.sql.VarChar(20), resultado)
+            .input("tiempo", db.sql.Int, tiempoCol)
             .query(`
                 INSERT INTO auris.respuesta_pregunta
                     (evaluacion_id, pregunta_id, orden_presentacion,
                      alternativa_intento1_id, correcta_intento1,
-                     intentos_usados, resultado)
+                     intentos_usados, resultado, tiempo_segundos)
                 VALUES (@evaluacion_id, @pregunta_id, @orden,
-                        @alt1, @correcta1, 1, @resultado);
+                        @alt1, @correcta1, 1, @resultado, @tiempo);
             `);
 
-        const finalizada = corr.esCorrecta;
         return {
             correcta: corr.esCorrecta,
             intento: 1,
@@ -274,12 +290,14 @@ async function registrarRespuesta(evaluacionId, preguntaId, alternativaId, inten
         .input("alt2", db.sql.BigInt, alternativaId)
         .input("correcta2", db.sql.Bit, corr.esCorrecta ? 1 : 0)
         .input("resultado", db.sql.VarChar(20), resultado2)
+        .input("tiempo", db.sql.Int, tiempoFinal)
         .query(`
             UPDATE auris.respuesta_pregunta
             SET    alternativa_intento2_id = @alt2,
                    correcta_intento2 = @correcta2,
                    intentos_usados = 2,
-                   resultado = @resultado
+                   resultado = @resultado,
+                   tiempo_segundos = @tiempo
             WHERE  evaluacion_id = @evaluacion_id AND pregunta_id = @pregunta_id;
         `);
 
@@ -394,7 +412,7 @@ async function obtenerInforme(evaluacionId) {
 }
 
 /**
- * Desglose pregunta a pregunta de una evaluación (para el cuerpo del informe).
+ * Desglose pregunta a pregunta de una evaluación (informe corto por correo).
  * Devuelve enunciado + resultado de cada pregunta respondida, en orden.
  */
 async function obtenerDetallePorPregunta(evaluacionId) {
@@ -405,13 +423,85 @@ async function obtenerDetallePorPregunta(evaluacionId) {
             SELECT  rp.orden_presentacion,
                     p.enunciado,
                     rp.resultado,
-                    rp.intentos_usados
+                    rp.intentos_usados,
+                    rp.tiempo_segundos
             FROM    auris.respuesta_pregunta rp
             JOIN    auris.pregunta p ON p.pregunta_id = rp.pregunta_id
             WHERE   rp.evaluacion_id = @evaluacion_id
             ORDER BY rp.orden_presentacion;
         `);
     return r.recordset;
+}
+
+/**
+ * Informe COMPLETO para descarga PDF (pedido cliente 2026-05-26):
+ * para cada pregunta devuelve enunciado, explicación, alternativas, qué
+ * alternativa eligió en cada intento, cuál era la correcta, y el tiempo
+ * que tardó. Funciona para anónimas e identificadas.
+ */
+async function obtenerInformeCompletoPorPregunta(evaluacionId) {
+    const pool = db.getPool("auris");
+
+    const rPreg = await pool
+        .request()
+        .input("evaluacion_id", db.sql.BigInt, evaluacionId)
+        .query(`
+            SELECT  rp.respuesta_id,
+                    rp.pregunta_id,
+                    rp.orden_presentacion,
+                    rp.alternativa_intento1_id,
+                    rp.alternativa_intento2_id,
+                    rp.intentos_usados,
+                    rp.resultado,
+                    rp.tiempo_segundos,
+                    p.enunciado,
+                    p.explicacion_clinica
+            FROM    auris.respuesta_pregunta rp
+            JOIN    auris.pregunta p ON p.pregunta_id = rp.pregunta_id
+            WHERE   rp.evaluacion_id = @evaluacion_id
+            ORDER BY rp.orden_presentacion;
+        `);
+    const preguntas = rPreg.recordset;
+    if (preguntas.length === 0) return [];
+
+    // Cargamos las alternativas de todas las preguntas en una sola query
+    const ids = preguntas.map((p) => Number(p.pregunta_id));
+    const reqAlt = pool.request();
+    const placeholders = ids.map((_, i) => {
+        reqAlt.input(`p${i}`, db.sql.BigInt, ids[i]);
+        return `@p${i}`;
+    });
+    const rAlt = await reqAlt.query(`
+        SELECT alternativa_id, pregunta_id, texto, es_correcta, orden
+        FROM   auris.alternativa
+        WHERE  pregunta_id IN (${placeholders.join(",")})
+        ORDER BY pregunta_id, orden;
+    `);
+
+    const altsPorPregunta = {};
+    for (const a of rAlt.recordset) {
+        const k = String(a.pregunta_id);
+        if (!altsPorPregunta[k]) altsPorPregunta[k] = [];
+        altsPorPregunta[k].push({
+            alternativa_id: a.alternativa_id,
+            texto: a.texto,
+            es_correcta: a.es_correcta === true || a.es_correcta === 1,
+            orden: a.orden,
+        });
+    }
+
+    return preguntas.map((p) => ({
+        orden_presentacion: p.orden_presentacion,
+        pregunta_id: p.pregunta_id,
+        enunciado: p.enunciado,
+        explicacion_clinica: p.explicacion_clinica,
+        intentos_usados: p.intentos_usados,
+        resultado: p.resultado,
+        tiempo_segundos: p.tiempo_segundos,
+        alternativa_intento1_id: p.alternativa_intento1_id,
+        alternativa_intento2_id: p.alternativa_intento2_id,
+        alternativas: altsPorPregunta[String(p.pregunta_id)] || [],
+    }));
 }
 
 /** Marca el informe como enviado (RF-42). */
@@ -436,5 +526,6 @@ module.exports = {
     finalizarEvaluacion,
     obtenerInforme,
     obtenerDetallePorPregunta,
+    obtenerInformeCompletoPorPregunta,
     marcarInformeEnviado,
 };

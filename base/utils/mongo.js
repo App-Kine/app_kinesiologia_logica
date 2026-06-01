@@ -19,11 +19,13 @@ const { MongoClient, GridFSBucket, ObjectId } = require("mongodb");
 
 const BUCKET_AUDIOS = "fs_audios";
 const BUCKET_IMAGENES = "fs_imagenes";
+const BUCKET_VIDEOS = "fs_videos";
 
 let _client = null;
 let _db = null;
 let _bucketAudios = null;
 let _bucketImagenes = null;
+let _bucketVideos = null;
 
 const initialize = async () => {
     const conf = (global.config && global.config.mongo) || null;
@@ -49,9 +51,12 @@ const initialize = async () => {
         _bucketImagenes = new GridFSBucket(_db, {
             bucketName: BUCKET_IMAGENES,
         });
+        _bucketVideos = new GridFSBucket(_db, {
+            bucketName: BUCKET_VIDEOS,
+        });
 
         logger.log(
-            `\x1b[36m[mongo]\x1b[0m Conectado a ${dbName} (${BUCKET_AUDIOS}, ${BUCKET_IMAGENES})`
+            `\x1b[36m[mongo]\x1b[0m Conectado a ${dbName} (${BUCKET_AUDIOS}, ${BUCKET_IMAGENES}, ${BUCKET_VIDEOS})`
         );
     } catch (e) {
         // No tiramos la app: la multimedia es opcional. Avisamos y seguimos.
@@ -62,6 +67,7 @@ const initialize = async () => {
         _db = null;
         _bucketAudios = null;
         _bucketImagenes = null;
+        _bucketVideos = null;
     }
 };
 
@@ -86,6 +92,11 @@ const bucketImagenes = () => {
     return _bucketImagenes;
 };
 
+const bucketVideos = () => {
+    if (!_bucketVideos) throw new Error("Bucket fs_videos no disponible (Mongo no inicializado).");
+    return _bucketVideos;
+};
+
 const close = async () => {
     if (_client) {
         try {
@@ -98,16 +109,19 @@ const close = async () => {
     _db = null;
     _bucketAudios = null;
     _bucketImagenes = null;
+    _bucketVideos = null;
 };
 
 module.exports = {
     ObjectId,
     BUCKET_AUDIOS,
     BUCKET_IMAGENES,
+    BUCKET_VIDEOS,
     initialize,
     isReady,
     getDb,
     bucketAudios,
     bucketImagenes,
+    bucketVideos,
     close,
 };
