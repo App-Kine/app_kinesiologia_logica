@@ -12,23 +12,13 @@
 var reply = require("../../base/utils/reply");
 var mailer = require("../../base/utils/mailer");
 var evalRepo = require("../repositories/evaluacion.repository");
+// Bloque P3.R9: utilidades compartidas
+var { leerArg, RE_CORREO } = require("../../base/utils/argReader");
 
 const TAG = "\x1b[36m[evaluacion]\x1b[0m";
 const TAG_ERR = "\x1b[31m[evaluacion]\x1b[0m";
 
-const RE_CORREO = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-function _leerArg(request) {
-    try {
-        if (request.body && typeof request.body.arg === "string") {
-            return JSON.parse(request.body.arg);
-        }
-        return request.body || {};
-    } catch (e) {
-        logger.log(`${TAG_ERR} _leerArg: arg JSON inválido — ${e.message}`);
-        return {};
-    }
-}
+function _leerArg(request) { return leerArg(request, { tag: TAG_ERR }); }
 
 /** POST /evaluacion/aplicacionesActivas  body: { cursoId } */
 async function aplicacionesActivas(request, response) {
@@ -50,7 +40,13 @@ async function aplicacionesActivas(request, response) {
 
 /**
  * POST /evaluacion/iniciar  body: { aplicacionId, modalidad, correo? }
- * Crea la evaluación y devuelve { evaluacion, preguntas } (RF-06..RF-14).
+ *
+ * CAMBIO (auditoría 2026-05-28): ya NO crea fila en auris.evaluacion.
+ * Solo valida y devuelve las preguntas del test. La evaluación se persiste
+ * únicamente cuando el estudiante envía el test completo (POST /enviar).
+ *
+ * Política: "como si no pasara nada" — si el estudiante abandona antes de
+ * enviar, no queda rastro en la BD.
  */
 async function iniciar(request, response) {
     const b = _leerArg(request);
@@ -79,22 +75,22 @@ async function iniciar(request, response) {
             );
         }
 
-        const correoFinal = modalidad === "IDENTIFICADA" ? correo : null;
-        const ev = await evalRepo.iniciarEvaluacion(aplicacionId, modalidad, correoFinal);
-        const preguntas = await evalRepo.cargarPreguntas(apl.test_id, apl.orden_aleatorio === true || apl.orden_aleatorio === 1);
+        const preguntas = await evalRepo.cargarPreguntas(
+            apl.test_id,
+            apl.orden_aleatorio === true || apl.orden_aleatorio === 1
+        );
 
         if (preguntas.length === 0) {
             return response.json(reply.error("El test no tiene preguntas activas"));
         }
 
-        logger.log(`${TAG} iniciar: OK evaluacion_id=${ev.evaluacion_id} preguntas=${preguntas.length}`);
+        logger.log(`${TAG} iniciar: OK (sin persistir) aplicacion=${aplicacionId} preguntas=${preguntas.length}`);
         response.json(
             reply.ok({
-                evaluacion_id: ev.evaluacion_id,
-                evaluacion_uuid: ev.evaluacion_uuid,
                 aplicacion_id: aplicacionId,
                 test_nombre: apl.test_nombre,
                 modalidad: modalidad,
+                correo: modalidad === "IDENTIFICADA" ? correo : null,
                 total_preguntas: preguntas.length,
                 preguntas: preguntas,
             })
@@ -106,14 +102,143 @@ async function iniciar(request, response) {
 }
 
 /**
- * POST /evaluacion/responder
- * body: { evaluacionId, preguntaId, alternativaId, intento, ordenPresentacion, tiempoSegundos? }
- * RF-25/26/31/32/34/35/36/38.
+ * POST /evaluacion/corregir
+ * body: { aplicacionId, preguntaId, alternativaId, intento }
  *
- * `tiempoSegundos` (pedido cliente 2026-05-26): segundos en pantalla.
- * Solo se persiste cuando este intento finaliza la pregunta.
+ * NUEVO (auditoría 2026-05-28). Corrige una respuesta SIN persistir nada.
+ * Reemplaza al antiguo /responder, que sí escribía a BD por cada intento.
+ *
+ * Devuelve la corrección + (si la pregunta queda finalizada) la alternativa
+ * correcta y la explicación clínica.
+ */
+async function corregir(request, response) {
+    const b = _leerArg(request);
+    const aplicacionId = Number(b.aplicacionId);
+    const preguntaId = Number(b.preguntaId);
+    const alternativaId = Number(b.alternativaId);
+    const intento = Number(b.intento);
+    logger.log(`${TAG} corregir: apl=${aplicacionId} preg=${preguntaId} intento=${intento}`);
+    try {
+        if (!Number.isInteger(aplicacionId) || aplicacionId <= 0)
+            return response.json(reply.error("aplicacionId requerido"));
+        if (!Number.isInteger(preguntaId) || preguntaId <= 0)
+            return response.json(reply.error("preguntaId requerido"));
+        if (!Number.isInteger(alternativaId) || alternativaId <= 0)
+            return response.json(reply.error("alternativaId requerido"));
+        if (intento !== 1 && intento !== 2)
+            return response.json(reply.error("intento debe ser 1 o 2"));
+
+        // Verificamos que la aplicación esté activa (RF-04 / RF-92)
+        const apl = await evalRepo.obtenerAplicacionActiva(aplicacionId);
+        if (!apl) {
+            return response.json(reply.error("La aplicación no está disponible"));
+        }
+
+        try {
+            const res = await evalRepo.corregirIntento(preguntaId, alternativaId, intento);
+            logger.log(`${TAG} corregir: OK correcta=${res.correcta} reveal=${res.finalizadaPregunta}`);
+            response.json(reply.ok(res));
+        } catch (e) {
+            if (e.code === "ALT_INVALIDA") {
+                logger.log(`${TAG} corregir: rechazado (${e.code})`);
+                return response.json(reply.error(e.message));
+            }
+            throw e;
+        }
+    } catch (e) {
+        logger.log(`${TAG_ERR} corregir: ${e.message}`, e);
+        response.json(reply.fatal(e));
+    }
+}
+
+/**
+ * POST /evaluacion/enviar
+ * body: { aplicacionId, modalidad, correo?, respuestas: [...] }
+ *
+ * NUEVO (auditoría 2026-05-28). Crea la evaluación + todas las respuestas
+ * en UNA transacción atómica. Si algo falla, ROLLBACK completo.
+ *
+ * Si el cliente nunca llega a llamar a este endpoint (cierra browser,
+ * pierde conexión, abandona) NADA queda en la BD.
+ */
+async function enviar(request, response) {
+    const b = _leerArg(request);
+    const aplicacionId = Number(b.aplicacionId);
+    const modalidad = (b.modalidad || "").toUpperCase();
+    const correo = b.correo ? String(b.correo).trim() : null;
+    const respuestas = Array.isArray(b.respuestas) ? b.respuestas : [];
+    logger.log(`${TAG} enviar: apl=${aplicacionId} modalidad=${modalidad} respuestas=${respuestas.length}`);
+    try {
+        if (!Number.isInteger(aplicacionId) || aplicacionId <= 0)
+            return response.json(reply.error("aplicacionId requerido"));
+        if (modalidad !== "ANONIMA" && modalidad !== "IDENTIFICADA")
+            return response.json(reply.error("modalidad debe ser ANONIMA o IDENTIFICADA"));
+        if (modalidad === "IDENTIFICADA") {
+            if (!correo) return response.json(reply.error("correo requerido en modalidad IDENTIFICADA"));
+            if (!RE_CORREO.test(correo)) return response.json(reply.error("Formato de correo inválido"));
+        }
+        if (respuestas.length === 0)
+            return response.json(reply.error("Debes responder al menos una pregunta"));
+
+        // Normalizamos las respuestas que vienen del cliente
+        const normalizadas = respuestas.map((r) => ({
+            preguntaId: Number(r.preguntaId),
+            ordenPresentacion: Number(r.ordenPresentacion) || 1,
+            alternativaIntento1Id: Number(r.alternativaIntento1Id),
+            alternativaIntento2Id: r.alternativaIntento2Id ? Number(r.alternativaIntento2Id) : null,
+            tiempoSegundos: r.tiempoSegundos != null ? Number(r.tiempoSegundos) : null,
+        }));
+
+        // Validación simple de cada respuesta
+        for (let i = 0; i < normalizadas.length; i++) {
+            const r = normalizadas[i];
+            if (!Number.isInteger(r.preguntaId) || r.preguntaId <= 0)
+                return response.json(reply.error(`respuesta #${i+1}: preguntaId inválido`));
+            if (!Number.isInteger(r.alternativaIntento1Id) || r.alternativaIntento1Id <= 0)
+                return response.json(reply.error(`respuesta #${i+1}: alternativaIntento1Id inválido`));
+            if (r.alternativaIntento2Id != null &&
+                (!Number.isInteger(r.alternativaIntento2Id) || r.alternativaIntento2Id <= 0))
+                return response.json(reply.error(`respuesta #${i+1}: alternativaIntento2Id inválido`));
+        }
+
+        try {
+            const resumen = await evalRepo.enviarEvaluacionCompleta({
+                aplicacionId,
+                modalidad,
+                correo: modalidad === "IDENTIFICADA" ? correo : null,
+                respuestas: normalizadas,
+            });
+            logger.log(`${TAG} enviar: OK evaluacion_id=${resumen.evaluacion_id} pct=${resumen.porcentaje_global}%`);
+            response.json(reply.ok({ modalidad, ...resumen }));
+        } catch (e) {
+            if (["APL_INACTIVA", "SIN_RESPUESTAS", "ALT_INVALIDA"].includes(e.code)) {
+                logger.log(`${TAG} enviar: rechazado (${e.code})`);
+                return response.json(reply.error(e.message));
+            }
+            throw e;
+        }
+    } catch (e) {
+        logger.log(`${TAG_ERR} enviar: ${e.message}`, e);
+        response.json(reply.fatal(e));
+    }
+}
+
+/**
+ * POST /evaluacion/responder
+ *
+ * @deprecated 2026-05-28. Reemplazado por /corregir (corrección sin
+ * persistir) + /enviar (persistencia atómica al final). Devuelve error
+ * inmediato para que el cliente migre al nuevo flujo.
  */
 async function responder(request, response) {
+    logger.log(`${TAG_ERR} responder: endpoint deprecado, usa /corregir y /enviar`);
+    return response.json(reply.error(
+        "Endpoint deprecado. Migrar a /evaluacion/corregir + /evaluacion/enviar."
+    ));
+}
+
+/* ===== Implementación antigua (preservada por si necesitas migración rollback) =====
+async function _responder_LEGACY(request, response) {
     const b = _leerArg(request);
     const evaluacionId = Number(b.evaluacionId);
     const preguntaId = Number(b.preguntaId);
@@ -158,9 +283,23 @@ async function responder(request, response) {
         response.json(reply.fatal(e));
     }
 }
+===== fin LEGACY ===== */
 
-/** POST /evaluacion/finalizar  body: { evaluacionId } (RF-39/40/44) */
+/**
+ * POST /evaluacion/finalizar
+ *
+ * @deprecated 2026-05-28. Reemplazado por /enviar que crea evaluación +
+ * respuestas + totales en una sola transacción. Devuelve error inmediato.
+ */
 async function finalizar(request, response) {
+    logger.log(`${TAG_ERR} finalizar: endpoint deprecado, usa /enviar`);
+    return response.json(reply.error(
+        "Endpoint deprecado. Migrar a /evaluacion/enviar."
+    ));
+}
+
+/* ===== Implementación antigua preservada =====
+async function _finalizar_LEGACY(request, response) {
     const b = _leerArg(request);
     const evaluacionId = Number(b.evaluacionId);
     logger.log(`${TAG} finalizar: eval=${evaluacionId}`);
@@ -184,6 +323,7 @@ async function finalizar(request, response) {
         response.json(reply.fatal(e));
     }
 }
+===== fin LEGACY ===== */
 
 /** Etiqueta legible para el resultado de una pregunta. */
 function _labelResultado(r) {
@@ -372,8 +512,10 @@ async function informeCompleto(request, response) {
 module.exports = {
     aplicacionesActivas,
     iniciar,
-    responder,
-    finalizar,
+    corregir,      // NUEVO: corrección sin persistir
+    enviar,        // NUEVO: persistencia atómica al final
+    responder,     // DEPRECADO: devuelve error
+    finalizar,    // DEPRECADO: devuelve error
     enviarInforme,
     informeCompleto,
 };

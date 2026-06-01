@@ -30,10 +30,36 @@ let setRequestLargeEntity = () => {
     );
 };
 
+// CORS con allowlist (ISO 25010 — Seguridad/Confidencialidad).
+// Orígenes permitidos vía env CORS_ORIGINS (lista separada por comas) o
+// global.config.corsOrigins. En desarrollo se permiten los locales del panel,
+// la app web del estudiante (que sube multimedia directo a la lógica) y los
+// orígenes de Capacitor.
+const CORS_DEV_ORIGINS = [
+    "http://localhost:4200",
+    "http://localhost:4201",
+    "http://localhost:8100",
+    "capacitor://localhost",
+    "ionic://localhost",
+];
+let corsOrigenesPermitidos = () => {
+    const fromEnv = (process.env.CORS_ORIGINS || "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+    const fromConfig = (global.config && global.config.corsOrigins) || [];
+    const merged = [...fromEnv, ...fromConfig];
+    return merged.length ? merged : CORS_DEV_ORIGINS;
+};
+
 let configCORS = () => {
     try {
         app.use(function (req, res, next) {
-            res.setHeader("Access-Control-Allow-Origin", "*");
+            const origin = req.headers.origin;
+            if (origin && corsOrigenesPermitidos().includes(origin)) {
+                res.setHeader("Access-Control-Allow-Origin", origin);
+                res.setHeader("Vary", "Origin");
+            }
             res.setHeader(
                 "Access-Control-Allow-Methods",
                 "POST, GET, OPTIONS, DELETE"
@@ -82,6 +108,8 @@ let setConfig = async () => {
     try {
         global.config = await loadConfig();
         logger.log(`\x1b[36m[${infoApp.name}]\x1b[0m Config: listo`);
+        // P2.R6: inicializar tracker de errores (no-op si no hay dsn configurado)
+        require("./base/utils/errorTracker").initialize();
     } catch (e) {
         throw { msgs: "Error carga config/envConfig", error: e };
     }
@@ -117,6 +145,10 @@ let setRouters = (module) => {
                     `/${rootPath}/base`,
                     require("./base/routes/base.router")
                 );
+                // Health endpoints (Bloque P2.R7) — montados SIN prefijo
+                // /base_logica para que las herramientas de monitoreo estándar
+                // los puedan sondear (kubectl, nginx upstream, etc).
+                app.use("/", require("./proyecto/routes/health.router"));
                 break;
             case "proyecto":
                 require("./routes")(app, rootPath);

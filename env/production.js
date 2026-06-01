@@ -46,6 +46,12 @@ module.exports = {
     frontend: {
         baseUrl: process.env.FRONTEND_BASE_URL || "",
     },
+    // Orígenes CORS permitidos (lista separada por comas en CORS_ORIGINS).
+    // Ej: "https://panel.auris.cl,https://app.auris.cl,capacitor://localhost"
+    corsOrigins: (process.env.CORS_ORIGINS || "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean),
     invitaciones: {
         expiraHoras: parseInt(process.env.INVITACION_EXPIRA_HORAS || "24", 10),
     },

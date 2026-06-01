@@ -46,7 +46,7 @@ function requireAuth(request, response, next) {
     }
 
     try {
-        const payload = jwt.verify(token, sec.jwtSecret);
+        const payload = jwt.verify(token, sec.jwtSecret, { algorithms: ["HS256"] });
         request.usuario = {
             sub: payload.sub,
             correo: payload.correo,

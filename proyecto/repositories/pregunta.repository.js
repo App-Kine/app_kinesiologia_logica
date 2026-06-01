@@ -122,8 +122,10 @@ async function editarPreguntaConAlternativas(preguntaId, p, creadoPorEsperado) {
         const rCheck = await reqCheck
             .input("pregunta_id", db.sql.BigInt, preguntaId)
             .query(`
-                SELECT creado_por, activo FROM auris.pregunta
-                WHERE pregunta_id = @pregunta_id;
+                SELECT pregunta_id, creado_por, activo, enunciado,
+                       explicacion_clinica, audio_grid_id, imagen_grid_id, video_grid_id
+                FROM   auris.pregunta
+                WHERE  pregunta_id = @pregunta_id;
             `);
         if (rCheck.recordset.length === 0 || !rCheck.recordset[0].activo) {
             await tx.rollback();
@@ -133,6 +135,28 @@ async function editarPreguntaConAlternativas(preguntaId, p, creadoPorEsperado) {
             await tx.rollback();
             return { ok: false, reason: "FORBIDDEN" };
         }
+
+        // Bloque P2.R8: lock cuando hay evaluaciones FINALIZADAS que usan esta pregunta.
+        // Editar el enunciado o las alternativas de una pregunta YA respondida cambiaría
+        // el significado histórico del resultado del estudiante. Se devuelve LOCKED;
+        // el cliente debe clonar y editar la copia en lugar.
+        const rLock = await new db.sql.Request(tx)
+            .input("pregunta_id", db.sql.BigInt, preguntaId)
+            .query(`
+                SELECT COUNT(*) AS evaluaciones_finalizadas
+                FROM   auris.respuesta_pregunta rp
+                JOIN   auris.evaluacion e ON e.evaluacion_id = rp.evaluacion_id
+                WHERE  rp.pregunta_id = @pregunta_id
+                  AND  e.estado = 'FINALIZADA';
+            `);
+        const finalizadas = rLock.recordset[0]?.evaluaciones_finalizadas || 0;
+        if (finalizadas > 0) {
+            await tx.rollback();
+            return { ok: false, reason: "LOCKED", evaluacionesFinalizadas: finalizadas };
+        }
+
+        // Guardamos snapshot "antes" para auditoría (consumido por el service)
+        const antes = rCheck.recordset[0];
 
         // Actualizar la pregunta
         const reqP = new db.sql.Request(tx);
@@ -212,7 +236,7 @@ async function editarPreguntaConAlternativas(preguntaId, p, creadoPorEsperado) {
         }
 
         await tx.commit();
-        return { ok: true };
+        return { ok: true, antes };
     } catch (e) {
         logger.log(`${TAG_ERR} editarPreguntaConAlternativas rollback: ${e.message}`, e);
         try { await tx.rollback(); } catch (_) {}
@@ -404,6 +428,58 @@ async function desvincularDeTest(preguntaId, testId) {
     return { huerfanaEliminada: false };
 }
 
+/**
+ * Export completo del banco para reemplazabilidad (Bloque P3.R10).
+ * Devuelve todas las preguntas activas (opcionalmente filtradas por profesor)
+ * con sus alternativas, listas para serializar a CSV o QTI.
+ */
+async function exportarBanco(profesorId) {
+    const pool = db.getPool("auris");
+    const r1 = await pool
+        .request()
+        .input("profesor_id", db.sql.BigInt, profesorId || null)
+        .query(`
+            SELECT  p.pregunta_id, p.enunciado, p.explicacion_clinica,
+                    p.curso_origen_id, c.codigo AS curso_codigo,
+                    p.audio_grid_id, p.imagen_grid_id, p.video_grid_id,
+                    p.creado_por, u.correo AS creado_por_correo,
+                    p.created_at, p.updated_at
+            FROM    auris.pregunta p
+            LEFT JOIN auris.curso c    ON c.curso_id    = p.curso_origen_id
+            LEFT JOIN auris.usuario u  ON u.usuario_id  = p.creado_por
+            WHERE   p.activo = 1
+              AND   (@profesor_id IS NULL OR p.creado_por = @profesor_id)
+            ORDER BY p.pregunta_id;
+        `);
+    const preguntas = r1.recordset;
+    if (preguntas.length === 0) return [];
+
+    const ids = preguntas.map((p) => Number(p.pregunta_id));
+    const req2 = pool.request();
+    const placeholders = ids.map((_, i) => {
+        req2.input(`p${i}`, db.sql.BigInt, ids[i]);
+        return `@p${i}`;
+    });
+    const r2 = await req2.query(`
+        SELECT pregunta_id, alternativa_id, texto, es_correcta, orden
+        FROM   auris.alternativa
+        WHERE  pregunta_id IN (${placeholders.join(",")})
+        ORDER BY pregunta_id, orden;
+    `);
+    const alts = {};
+    for (const a of r2.recordset) {
+        const k = String(a.pregunta_id);
+        if (!alts[k]) alts[k] = [];
+        alts[k].push({
+            alternativa_id: a.alternativa_id,
+            texto: a.texto,
+            es_correcta: a.es_correcta === true || a.es_correcta === 1,
+            orden: a.orden,
+        });
+    }
+    return preguntas.map((p) => ({ ...p, alternativas: alts[String(p.pregunta_id)] || [] }));
+}
+
 module.exports = {
     crearPreguntaConAlternativas,
     listarPorProfesor,
@@ -412,4 +488,5 @@ module.exports = {
     eliminarPregunta,
     vincularATest,
     desvincularDeTest,
+    exportarBanco,
 };

@@ -126,7 +126,7 @@ async function login(request, response) {
                 roles: roles,
             },
             sec.jwtSecret,
-            { expiresIn: sec.jwtAccessExpiresIn || "8h" }
+            { algorithm: "HS256", expiresIn: sec.jwtAccessExpiresIn || "8h" }
         );
 
         // 6) Refresh token: string aleatorio; almacenamos solo el hash (RNF-18)

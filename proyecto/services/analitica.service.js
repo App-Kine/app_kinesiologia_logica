@@ -6,21 +6,13 @@
 
 var reply = require("../../base/utils/reply");
 var analiticaRepo = require("../repositories/analitica.repository");
+// Bloque P3.R9: utilidades compartidas
+var { leerArg } = require("../../base/utils/argReader");
 
 const TAG = "\x1b[36m[analitica]\x1b[0m";
 const TAG_ERR = "\x1b[31m[analitica]\x1b[0m";
 
-function _leerArg(request) {
-    try {
-        if (request.body && typeof request.body.arg === "string") {
-            return JSON.parse(request.body.arg);
-        }
-        return request.body || {};
-    } catch (e) {
-        logger.log(`${TAG_ERR} _leerArg: arg JSON inválido — ${e.message}`);
-        return {};
-    }
-}
+function _leerArg(request) { return leerArg(request, { tag: TAG_ERR }); }
 
 /**
  * POST /base_logica/analitica/resumen   body.arg = { profesorId }
