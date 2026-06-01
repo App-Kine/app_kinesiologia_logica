@@ -138,8 +138,25 @@ async function listar(request, response) {
     const b = _leerArg(request);
     const coerced = Number(b.profesorId);
     const profesorId = Number.isInteger(coerced) && coerced > 0 ? coerced : null;
-    logger.log(`${TAG} listar: profesorId=${profesorId || 'todos'}`);
+
+    // Paginación opcional (escalabilidad). Con pageSize > 0 devuelve un envelope
+    // { items, page, pageSize, hasMore }; sin él, un array (compatible hacia atrás).
+    const ps = Number(b.pageSize);
+    const pg = Number(b.page);
+    const paginar = Number.isInteger(ps) && ps > 0;
+    const pageSize = paginar ? Math.min(ps, 100) : null;
+    const page = paginar && Number.isInteger(pg) && pg > 0 ? pg : 1;
+
+    logger.log(`${TAG} listar: profesorId=${profesorId || 'todos'}${paginar ? ` page=${page} size=${pageSize}` : ''}`);
     try {
+        if (paginar) {
+            const offset = (page - 1) * pageSize;
+            const rows = await preguntaRepo.listarPorProfesor(profesorId, { limit: pageSize + 1, offset });
+            const hasMore = rows.length > pageSize;
+            const items = hasMore ? rows.slice(0, pageSize) : rows;
+            logger.log(`${TAG} listar: OK (page ${page}, ${items.length} filas, hasMore=${hasMore})`);
+            return response.json(reply.ok({ items, page, pageSize, hasMore }));
+        }
         const data = await preguntaRepo.listarPorProfesor(profesorId);
         logger.log(`${TAG} listar: OK (${data.length} filas)`);
         response.json(reply.ok(data));
@@ -161,6 +178,17 @@ async function obtener(request, response) {
         const data = await preguntaRepo.obtenerConAlternativas(preguntaId);
         if (!data) {
             logger.log(`${TAG} obtener: no encontrada (id=${preguntaId})`);
+            return response.json(reply.error("Pregunta no encontrada"));
+        }
+        // Autorización (RNF-19): un profesor solo accede a SUS preguntas (esta
+        // respuesta incluye cuál es la correcta). El profesorId lo inyecta el
+        // controlador desde el JWT. Si no es el dueño, "no encontrada".
+        const profesorId = Number(b.profesorId);
+        if (
+            Number.isInteger(profesorId) && profesorId > 0 &&
+            Number(data.creado_por) !== profesorId
+        ) {
+            logger.log(`${TAG} obtener: DENEGADO id=${preguntaId} dueño=${data.creado_por} solicita=${profesorId}`);
             return response.json(reply.error("Pregunta no encontrada"));
         }
         logger.log(`${TAG} obtener: OK id=${preguntaId}`);

@@ -13,5 +13,6 @@ var svc = require("../services/health.service");
 router.get("/healthz", svc.liveness);
 router.get("/readyz",  svc.readiness);
 router.get("/health",  svc.detailed);
+router.get("/metrics", svc.metrics);
 
 module.exports = router;

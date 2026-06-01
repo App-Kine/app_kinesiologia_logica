@@ -2,7 +2,10 @@
 
 var express = require("express");
 var methodOverride = require("method-override");
+var crypto = require("crypto");
 
+var requestContext = require("./base/utils/requestContext");
+var metrics = require("./base/utils/metrics");
 global.logger = require("./base/utils/logConsola");
 
 var loadConfig = require("./base/utils/loadConfig");
@@ -12,6 +15,20 @@ var infoApp = require("./package.json");
 var { rootPath, largeEntity } = require("./config").app;
 
 var app = express();
+
+// Correlación de requests (ISO 25010 — Observabilidad): reutiliza el
+// X-Request-Id que envía el gateway (o genera uno si la lógica se llama directo)
+// y corre el request dentro de un AsyncLocalStorage para que el logger lo
+// anteponga. Debe ser el PRIMER middleware.
+let setRequestContext = () => {
+    app.use((req, res, next) => {
+        const incoming = req.headers["x-request-id"];
+        const id = (incoming && String(incoming).slice(0, 64)) || crypto.randomUUID();
+        req.id = id;
+        res.setHeader("X-Request-Id", id);
+        requestContext.run({ id }, () => next());
+    });
+};
 
 let setRequestLargeEntity = () => {
     app.use(
@@ -162,6 +179,8 @@ let setRouters = (module) => {
     }
 };
 
+let httpServer = null;
+
 let launchApp = () => {
     try {
         const server = app.listen(global.config.app.port, function () {
@@ -173,6 +192,8 @@ let launchApp = () => {
                 }, Path: /${rootPath}, Tipo: LOGICA, v: ${infoApp.version}`
             );
         });
+        httpServer = server;
+        setupGracefulShutdown();
 
         // El error de listen (p.ej. EADDRINUSE) se emite de forma ASÍNCRONA
         // como evento 'error' del server; el try/catch de arriba NO lo atrapa.
@@ -199,6 +220,8 @@ let launchApp = () => {
 
 let initApp = async () => {
     try {
+        setRequestContext();
+        app.use(metrics.middleware); // métricas Prometheus (GET /metrics)
         setRequestLargeEntity();
         configCORS();
         await setConfig();
@@ -212,6 +235,39 @@ let initApp = async () => {
             `\x1b[36m[${infoApp.name}] \x1b[33m[${e.msgs}] ${e.error}\x1b[0m`
         );
     }
+};
+
+// Apagado limpio (ISO 25010 — Disponibilidad): ante SIGTERM/SIGINT dejamos de
+// aceptar conexiones, esperamos a que terminen las en curso y cerramos los
+// pools de SQL Server y el cliente de Mongo antes de salir. Así un deploy o
+// reinicio no corta requests ni deja conexiones colgadas en la BD. Si no cierra
+// en 10s, forzamos la salida para no quedar bloqueados.
+let shuttingDown = false;
+let setupGracefulShutdown = () => {
+    const shutdown = (signal) => {
+        if (shuttingDown) return;
+        shuttingDown = true;
+        logger.log(`\x1b[36m[${infoApp.name}]\x1b[0m ${signal} recibido — cierre graceful…`);
+
+        const liberarRecursos = async () => {
+            try { await db.close(); logger.log(`\x1b[36m[${infoApp.name}]\x1b[0m Pools SQL cerrados.`); }
+            catch (e) { logger.log(`\x1b[31m[${infoApp.name}]\x1b[0m Error cerrando SQL: ${e.message}`); }
+            try { if (mongo.close) { await mongo.close(); logger.log(`\x1b[36m[${infoApp.name}]\x1b[0m Mongo cerrado.`); } }
+            catch (e) { logger.log(`\x1b[31m[${infoApp.name}]\x1b[0m Error cerrando Mongo: ${e.message}`); }
+            logger.log(`\x1b[36m[${infoApp.name}]\x1b[0m Recursos liberados. Bye.`);
+            process.exit(0);
+        };
+
+        if (httpServer) httpServer.close(() => liberarRecursos());
+        else liberarRecursos();
+
+        setTimeout(() => {
+            logger.log(`\x1b[31m[${infoApp.name}]\x1b[0m Cierre forzado tras timeout (10s).`);
+            process.exit(1);
+        }, 10000).unref();
+    };
+    process.on("SIGTERM", () => shutdown("SIGTERM"));
+    process.on("SIGINT", () => shutdown("SIGINT"));
 };
 
 // Red de seguridad global: una excepción no atrapada en un handler de request

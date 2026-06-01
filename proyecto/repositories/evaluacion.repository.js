@@ -380,6 +380,27 @@ async function finalizarEvaluacion(evaluacionId, aplicacionId) {
 }
 
 /**
+ * Resuelve el evaluacion_id (BigInt interno) a partir del evaluacion_uuid
+ * público (UNIQUEIDENTIFIER no adivinable). Devuelve el número o null.
+ *
+ * Seguridad (auditoría 2026-06-01): el flujo del estudiante es público (sin
+ * login), así que el informe NO puede identificarse por el id secuencial
+ * —sería enumerable y filtraría correos + resultados de otros alumnos—. El
+ * cliente solo conoce el UUID que recibió al enviar su propia evaluación.
+ */
+async function resolverIdPorUuid(evaluacionUuid) {
+    const r = await db
+        .request("auris")
+        .input("evaluacion_uuid", db.sql.UniqueIdentifier, evaluacionUuid)
+        .query(`
+            SELECT  evaluacion_id
+            FROM    auris.evaluacion
+            WHERE   evaluacion_uuid = @evaluacion_uuid;
+        `);
+    return r.recordset[0] ? Number(r.recordset[0].evaluacion_id) : null;
+}
+
+/**
  * Datos completos de una evaluación finalizada para armar el informe por
  * correo (RF-41/42): totales + correo del estudiante + test/curso. Null si no.
  */
@@ -754,6 +775,7 @@ module.exports = {
     obtenerEvaluacion,
     registrarRespuesta,
     finalizarEvaluacion,
+    resolverIdPorUuid,
     obtenerInforme,
     obtenerDetallePorPregunta,
     obtenerInformeCompletoPorPregunta,

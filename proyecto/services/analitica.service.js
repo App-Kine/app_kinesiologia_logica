@@ -51,6 +51,16 @@ async function detalleAplicacion(request, response) {
         if (!resumenApl) {
             return response.json(reply.error("Aplicación no encontrada"));
         }
+        // Autorización (RNF-19): un profesor solo ve la analítica de SUS
+        // aplicaciones. El profesorId lo inyecta el controlador desde el JWT.
+        const profesorId = Number(b.profesorId);
+        if (
+            Number.isInteger(profesorId) && profesorId > 0 &&
+            Number(resumenApl.profesor_id) !== profesorId
+        ) {
+            logger.log(`${TAG} detalleAplicacion: DENEGADO aplicacionId=${aplicacionId} dueño=${resumenApl.profesor_id} solicita=${profesorId}`);
+            return response.json(reply.error("Aplicación no encontrada"));
+        }
         const preguntas = await analiticaRepo.preguntasPorAplicacion(aplicacionId);
         const evaluaciones = await analiticaRepo.evaluacionesPorAplicacion(aplicacionId);
         const tiemposIdentificados = await analiticaRepo.tiemposPorEvaluacionPregunta(aplicacionId);

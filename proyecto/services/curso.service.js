@@ -246,6 +246,18 @@ async function obtenerConAplicaciones(request, response) {
             return response.json(reply.error("Curso no encontrado"));
         }
 
+        // Autorización (RNF-19): un profesor solo accede a SUS cursos. El
+        // profesorId lo inyecta el controlador desde el JWT. Si no es el dueño,
+        // "no encontrado" (no revelamos que el curso existe).
+        const profesorId = Number(b.profesorId);
+        if (
+            Number.isInteger(profesorId) && profesorId > 0 &&
+            Number(rCurso.recordset[0].creado_por) !== profesorId
+        ) {
+            logger.log(`${TAG} obtenerConAplicaciones: DENEGADO cursoId=${cursoId} dueño=${rCurso.recordset[0].creado_por} solicita=${profesorId}`);
+            return response.json(reply.error("Curso no encontrado"));
+        }
+
         // Filtro defensivo (2026-05-26):
         //   - t.activo = 1: nunca mostramos aplicaciones cuyo test ya fue
         //     eliminado. Esto limpia el caso histórico donde el test se

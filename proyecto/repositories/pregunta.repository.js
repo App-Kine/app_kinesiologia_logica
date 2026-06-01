@@ -77,11 +77,22 @@ async function crearPreguntaConAlternativas(p) {
  * Lista preguntas creadas por un profesor (o todas si es null).
  * No retorna alternativas, pero sí su conteo.
  */
-async function listarPorProfesor(profesorId) {
-    const r = await db
+async function listarPorProfesor(profesorId, opciones = {}) {
+    const { limit, offset } = opciones;
+    const paginar = Number.isInteger(limit) && limit > 0;
+
+    const req = db
         .request("auris")
-        .input("profesor_id", db.sql.BigInt, profesorId || null)
-        .query(`
+        .input("profesor_id", db.sql.BigInt, profesorId || null);
+
+    let paginacionSql = "";
+    if (paginar) {
+        req.input("offset", db.sql.Int, Number.isInteger(offset) && offset > 0 ? offset : 0);
+        req.input("limit", db.sql.Int, limit);
+        paginacionSql = "OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY";
+    }
+
+    const r = await req.query(`
             SELECT  p.pregunta_id,
                     p.enunciado,
                     p.curso_origen_id,
@@ -98,7 +109,8 @@ async function listarPorProfesor(profesorId) {
             LEFT JOIN auris.curso c ON c.curso_id = p.curso_origen_id
             WHERE   p.activo = 1
               AND  (@profesor_id IS NULL OR p.creado_por = @profesor_id)
-            ORDER BY p.created_at DESC;
+            ORDER BY p.created_at DESC
+            ${paginacionSql};
         `);
     return r.recordset;
 }

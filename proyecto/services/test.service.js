@@ -124,8 +124,28 @@ async function listar(request, response) {
     const b = _leerArg(request);
     const coerced = Number(b.profesorId);
     const profesorId = Number.isInteger(coerced) && coerced > 0 ? coerced : null;
-    logger.log(`${TAG} listar: profesorId=${profesorId || 'todos'}`);
+
+    // Paginación opcional (escalabilidad). Si el cliente envía pageSize > 0,
+    // devolvemos un envelope { items, page, pageSize, hasMore }. Si NO lo envía,
+    // mantenemos el comportamiento histórico: un array con todos los tests.
+    const ps = Number(b.pageSize);
+    const pg = Number(b.page);
+    const paginar = Number.isInteger(ps) && ps > 0;
+    const pageSize = paginar ? Math.min(ps, 100) : null; // cap defensivo de 100
+    const page = paginar && Number.isInteger(pg) && pg > 0 ? pg : 1;
+
+    logger.log(`${TAG} listar: profesorId=${profesorId || 'todos'}${paginar ? ` page=${page} size=${pageSize}` : ''}`);
     try {
+        if (paginar) {
+            const offset = (page - 1) * pageSize;
+            // Pedimos pageSize+1 filas: si vuelve una de más, sabemos que hay
+            // más páginas sin necesidad de un COUNT(*) extra.
+            const rows = await testRepo.listarPorProfesor(profesorId, { limit: pageSize + 1, offset });
+            const hasMore = rows.length > pageSize;
+            const items = hasMore ? rows.slice(0, pageSize) : rows;
+            logger.log(`${TAG} listar: OK (page ${page}, ${items.length} filas, hasMore=${hasMore})`);
+            return response.json(reply.ok({ items, page, pageSize, hasMore }));
+        }
         const data = await testRepo.listarPorProfesor(profesorId);
         logger.log(`${TAG} listar: OK (${data.length} filas)`);
         response.json(reply.ok(data));
@@ -147,6 +167,17 @@ async function obtener(request, response) {
         const data = await testRepo.obtenerConPreguntas(testId);
         if (!data) {
             logger.log(`${TAG} obtener: no encontrado (id=${testId})`);
+            return response.json(reply.error("Test no encontrado"));
+        }
+        // Autorización (RNF-19): un profesor solo accede a SUS tests. El
+        // profesorId lo inyecta el controlador desde el JWT. Si no es el dueño,
+        // respondemos "no encontrado" (no revelamos que el test existe).
+        const profesorId = Number(b.profesorId);
+        if (
+            Number.isInteger(profesorId) && profesorId > 0 &&
+            Number(data.creado_por) !== profesorId
+        ) {
+            logger.log(`${TAG} obtener: DENEGADO id=${testId} dueño=${data.creado_por} solicita=${profesorId}`);
             return response.json(reply.error("Test no encontrado"));
         }
         logger.log(`${TAG} obtener: OK id=${testId}`);
