@@ -22,8 +22,27 @@ function _leerArg(request) {
         }
         return request.body || {};
     } catch (e) {
+        logger.log(`${TAG_ERR} _leerArg: arg JSON inválido — ${e.message}`);
         return {};
     }
+}
+
+/**
+ * Valida longitudes contra los límites del esquema SQL (test).
+ * Devuelve un mensaje de error o null si todo OK.
+ *
+ * Límites del esquema:
+ *   - test.nombre        NVARCHAR(200)
+ *   - test.descripcion   NVARCHAR(1000)
+ */
+function _validarLongitud(nombre, descripcion) {
+    if (typeof nombre === "string" && nombre.length > 200) {
+        return "El nombre del test no puede superar 200 caracteres";
+    }
+    if (typeof descripcion === "string" && descripcion.length > 1000) {
+        return "La descripción del test no puede superar 1000 caracteres";
+    }
+    return null;
 }
 
 function _validarComposicion(preguntas) {
@@ -68,6 +87,12 @@ async function crear(request, response) {
         if (!Number.isInteger(creadoPor) || creadoPor <= 0) {
             logger.log(`${TAG} crear: validación falló — creadoPor inválido (${b.creadoPor})`);
             return response.json(reply.error("creadoPor (usuario_id) requerido"));
+        }
+
+        const errLong = _validarLongitud(b.nombre, b.descripcion);
+        if (errLong) {
+            logger.log(`${TAG} crear: validación longitud falló — ${errLong}`);
+            return response.json(reply.error(errLong));
         }
 
         const errComp = _validarComposicion(b.preguntas);
@@ -166,6 +191,9 @@ async function editar(request, response) {
         if (!Number.isInteger(testId) || testId <= 0)
             return response.json(reply.error("testId requerido"));
         if (!nombre) return response.json(reply.error("nombre requerido"));
+
+        const errLong = _validarLongitud(nombre, descripcion);
+        if (errLong) return response.json(reply.error(errLong));
 
         const pool = db.getPool("auris");
         const rCheck = await pool

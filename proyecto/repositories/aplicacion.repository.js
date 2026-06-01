@@ -90,6 +90,8 @@ async function listarPorProfesor(profesorId, cursoId) {
             JOIN    auris.curso c ON c.curso_id = a.curso_id
             WHERE   (@profesor_id IS NULL OR a.profesor_id = @profesor_id)
               AND   (@curso_id IS NULL OR a.curso_id = @curso_id)
+              AND   t.activo = 1
+              AND   c.activo = 1
             ORDER BY a.created_at DESC;
         `);
     return r.recordset;

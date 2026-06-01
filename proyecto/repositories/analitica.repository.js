@@ -36,6 +36,8 @@ async function resumenPorProfesor(profesorId) {
             LEFT JOIN auris.vw_porcentaje_aplicacion vp
                       ON vp.aplicacion_id = apl.aplicacion_id
             WHERE   apl.profesor_id = @profesor_id
+              AND   t.activo = 1
+              AND   c.activo = 1
             ORDER BY apl.created_at DESC;
         `);
     return r.recordset;
@@ -65,7 +67,9 @@ async function resumenAplicacion(aplicacionId) {
             JOIN    auris.curso c ON c.curso_id = apl.curso_id
             LEFT JOIN auris.vw_porcentaje_aplicacion vp
                       ON vp.aplicacion_id = apl.aplicacion_id
-            WHERE   apl.aplicacion_id = @aplicacion_id;
+            WHERE   apl.aplicacion_id = @aplicacion_id
+              AND   t.activo = 1
+              AND   c.activo = 1;
         `);
     return r.recordset[0] || null;
 }

@@ -17,7 +17,7 @@
 db = db.getSiblingDB("auris_media");
 
 // --- Índices recomendados para cada bucket ---
-["fs_audios", "fs_imagenes"].forEach((bucket) => {
+["fs_audios", "fs_imagenes", "fs_videos"].forEach((bucket) => {
   const chunks = db.getCollection(bucket + ".chunks");
   const files = db.getCollection(bucket + ".files");
 
@@ -89,4 +89,29 @@ db.runCommand({
   validationAction: "error",
 });
 
-print("MongoDB GridFS inicializado: fs_audios y fs_imagenes listos en auris_media.");
+// --- Validador del bucket de videos (50 MB MP4/WebM, pedido cliente 2026-05-26) ---
+db.runCommand({
+  collMod: "fs_videos.files",
+  validator: {
+    $jsonSchema: {
+      bsonType: "object",
+      required: ["filename", "length"],
+      properties: {
+        length: {
+          bsonType: ["int", "long"],
+          maximum: 50 * 1024 * 1024,
+          description: "Video: máximo 50 MB",
+        },
+        contentType: {
+          bsonType: "string",
+          enum: ["video/mp4", "video/webm", "video/quicktime"],
+          description: "Solo MP4, WebM o MOV",
+        },
+      },
+    },
+  },
+  validationLevel: "moderate",
+  validationAction: "error",
+});
+
+print("MongoDB GridFS inicializado: fs_audios, fs_imagenes y fs_videos listos en auris_media.");

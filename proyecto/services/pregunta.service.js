@@ -28,6 +28,7 @@ function _leerArg(request) {
         }
         return request.body || {};
     } catch (e) {
+        logger.log(`${TAG_ERR} _leerArg: arg JSON inválido — ${e.message}`);
         return {};
     }
 }
@@ -49,6 +50,10 @@ function _validarAlternativas(alternativas) {
         if (!a || typeof a.texto !== "string" || a.texto.trim() === "") {
             return `Alternativa #${i + 1}: texto requerido`;
         }
+        // Límite del esquema: alternativa.texto NVARCHAR(1000)
+        if (a.texto.length > 1000) {
+            return `Alternativa #${i + 1}: texto no puede superar 1000 caracteres`;
+        }
         if (!Number.isInteger(a.orden) || a.orden < 1 || a.orden > 5) {
             return `Alternativa #${i + 1}: orden debe ser entero entre 1 y 5`;
         }
@@ -56,6 +61,24 @@ function _validarAlternativas(alternativas) {
             return `Alternativa #${i + 1}: orden ${a.orden} duplicado`;
         }
         ordenes.add(a.orden);
+    }
+    return null;
+}
+
+/**
+ * Valida longitudes de los campos de texto de pregunta contra los
+ * límites del esquema SQL. Devuelve mensaje o null si OK.
+ *
+ * Límites del esquema:
+ *   - pregunta.enunciado            NVARCHAR(2000)
+ *   - pregunta.explicacion_clinica  NVARCHAR(4000)
+ */
+function _validarLongitudPregunta(enunciado, explicacionClinica) {
+    if (typeof enunciado === "string" && enunciado.length > 2000) {
+        return "El enunciado no puede superar 2000 caracteres";
+    }
+    if (typeof explicacionClinica === "string" && explicacionClinica.length > 4000) {
+        return "La explicación clínica no puede superar 4000 caracteres";
     }
     return null;
 }
@@ -96,6 +119,12 @@ async function crear(request, response) {
             return response.json(
                 reply.error("videoGridId inválido (debe ser ObjectId hex 24)")
             );
+        }
+
+        const errLong = _validarLongitudPregunta(b.enunciado, b.explicacionClinica);
+        if (errLong) {
+            logger.log(`${TAG} crear: validación longitud falló — ${errLong}`);
+            return response.json(reply.error(errLong));
         }
 
         const errAlts = _validarAlternativas(b.alternativas);
@@ -183,6 +212,9 @@ async function editar(request, response) {
         if (b.videoGridId && !GRID_ID_RE.test(b.videoGridId))
             return response.json(reply.error("videoGridId inválido"));
 
+        const errLong = _validarLongitudPregunta(b.enunciado, b.explicacionClinica);
+        if (errLong) return response.json(reply.error(errLong));
+
         const errAlts = _validarAlternativas(b.alternativas);
         if (errAlts) return response.json(reply.error(errAlts));
 
@@ -245,8 +277,11 @@ async function eliminar(request, response) {
             return response.json(reply.error(msg));
         }
 
-        logger.log(`${TAG} eliminar: OK pregunta_id=${preguntaId}`);
-        response.json(reply.ok({ pregunta_id: preguntaId }));
+        logger.log(`${TAG} eliminar: OK pregunta_id=${preguntaId} tests_desvinculados=${res.tests_desvinculados || 0}`);
+        response.json(reply.ok({
+            pregunta_id: preguntaId,
+            tests_desvinculados: res.tests_desvinculados || 0,
+        }));
     } catch (e) {
         logger.log(`${TAG_ERR} eliminar: ${e.message}`, e);
         response.json(reply.fatal(e));
@@ -277,6 +312,10 @@ async function agregarATest(request, response) {
             return response.json(reply.error("imagenGridId inválido"));
         if (b.videoGridId && !GRID_ID_RE.test(b.videoGridId))
             return response.json(reply.error("videoGridId inválido"));
+
+        const errLong = _validarLongitudPregunta(b.enunciado, b.explicacionClinica);
+        if (errLong) return response.json(reply.error(errLong));
+
         const errAlts = _validarAlternativas(b.alternativas);
         if (errAlts) return response.json(reply.error(errAlts));
 

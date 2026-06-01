@@ -25,6 +25,7 @@ function _leerArg(request) {
         }
         return request.body || {};
     } catch (e) {
+        logger.log(`${TAG_ERR} _leerArg: arg JSON inválido — ${e.message}`);
         return {};
     }
 }

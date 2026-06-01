@@ -18,8 +18,33 @@ function _leerArg(request) {
         }
         return request.body || {};
     } catch (e) {
+        // arg malformado: el caller fallará en la validación de campos,
+        // pero al menos dejamos rastro en logs para diagnosticar.
+        logger.log(`${TAG_ERR} _leerArg: arg JSON inválido — ${e.message}`);
         return {};
     }
+}
+
+/**
+ * Valida longitudes de los campos de curso contra los límites del esquema SQL.
+ * Devuelve mensaje de error o null si OK.
+ *
+ * Límites del esquema:
+ *   - curso.codigo       VARCHAR(40)
+ *   - curso.nombre       NVARCHAR(160)
+ *   - curso.descripcion  NVARCHAR(1000)
+ */
+function _validarLongitudCurso(codigo, nombre, descripcion) {
+    if (typeof codigo === "string" && codigo.length > 40) {
+        return "El código del curso no puede superar 40 caracteres";
+    }
+    if (typeof nombre === "string" && nombre.length > 160) {
+        return "El nombre del curso no puede superar 160 caracteres";
+    }
+    if (typeof descripcion === "string" && descripcion.length > 1000) {
+        return "La descripción del curso no puede superar 1000 caracteres";
+    }
+    return null;
 }
 
 /**
@@ -155,6 +180,9 @@ async function crear(request, response) {
         if (!nombre) return response.json(reply.error("nombre requerido"));
         if (!Number.isInteger(creadoPor) || creadoPor <= 0)
             return response.json(reply.error("creadoPor (usuario_id) requerido"));
+
+        const errLong = _validarLongitudCurso(codigo, nombre, descripcion);
+        if (errLong) return response.json(reply.error(errLong));
 
         const pool = db.getPool("auris");
 
@@ -295,6 +323,9 @@ async function editar(request, response) {
         if (!codigo) return response.json(reply.error("código requerido"));
         if (!nombre) return response.json(reply.error("nombre requerido"));
 
+        const errLong = _validarLongitudCurso(codigo, nombre, descripcion);
+        if (errLong) return response.json(reply.error(errLong));
+
         const pool = db.getPool("auris");
 
         // Verificar propiedad
@@ -350,7 +381,13 @@ async function editar(request, response) {
 
 /**
  * POST /<rootPath>/cursos/eliminar  body.arg = { cursoId, creadoPor }
- * Soft-delete del curso (activo=0). Conserva históricos.
+ *
+ * Soft-delete del curso (activo=0) + CASCADE-deactivate de sus aplicaciones
+ * activas (aplicacion_test.activo=0). Conserva históricos de evaluaciones.
+ *
+ * Fix Día 2 (auditoría 2026-05-27): antes solo desactivaba el curso, pero
+ * las aplicaciones seguían activas y aparecían en analítica como fantasmas
+ * de un curso eliminado. Ahora cascade en transacción (igual que test).
  */
 async function eliminar(request, response) {
     const b = _leerArg(request);
@@ -376,16 +413,43 @@ async function eliminar(request, response) {
         if (Number(rCheck.recordset[0].creado_por) !== creadoPor)
             return response.json(reply.error("Solo el creador puede eliminar este curso"));
 
-        await pool
-            .request()
-            .input("curso_id", db.sql.BigInt, cursoId)
-            .query(`
-                UPDATE auris.curso SET activo = 0
-                WHERE curso_id = @curso_id;
-            `);
+        const tx = new db.sql.Transaction(pool);
+        await tx.begin();
+        try {
+            // 1) Soft-delete del curso
+            await new db.sql.Request(tx)
+                .input("curso_id", db.sql.BigInt, cursoId)
+                .query(`
+                    UPDATE auris.curso SET activo = 0
+                    WHERE curso_id = @curso_id;
+                `);
 
-        logger.log(`${TAG} eliminar: OK cursoId=${cursoId}`);
-        response.json(reply.ok({ curso_id: cursoId }));
+            // 2) Cascade: desactivar todas las aplicaciones del curso.
+            //    Sin esto las aplicaciones quedan huérfanas visibles en
+            //    analítica con curso "inexistente".
+            const rAplic = await new db.sql.Request(tx)
+                .input("curso_id", db.sql.BigInt, cursoId)
+                .query(`
+                    UPDATE auris.aplicacion_test
+                    SET    activo = 0
+                    WHERE  curso_id = @curso_id
+                      AND  activo = 1;
+                    SELECT @@ROWCOUNT AS afectadas;
+                `);
+            const afectadas = rAplic.recordset && rAplic.recordset[0]
+                ? rAplic.recordset[0].afectadas
+                : 0;
+
+            await tx.commit();
+            logger.log(`${TAG} eliminar: OK cursoId=${cursoId} aplicaciones desactivadas=${afectadas}`);
+            response.json(reply.ok({
+                curso_id: cursoId,
+                aplicaciones_desactivadas: afectadas,
+            }));
+        } catch (e) {
+            try { await tx.rollback(); } catch (_) {}
+            throw e;
+        }
     } catch (e) {
         logger.log(`${TAG_ERR} eliminar: ${e.message}`, e);
         response.json(reply.fatal(e));
