@@ -12,4 +12,8 @@ var services = require("../services/password.service");
 router.post("/solicitarReset",   services.solicitar);
 router.post("/resetearPassword", services.resetear);
 
+// Cambio de contraseña del usuario autenticado. El controlador exige JWT y le
+// inyecta el usuario_id verificado antes de reenviar acá.
+router.post("/cambiarPassword",  services.cambiar);
+
 module.exports = router;

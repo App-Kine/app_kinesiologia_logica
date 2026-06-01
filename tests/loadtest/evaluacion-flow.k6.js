@@ -19,7 +19,7 @@
  *        k6 run \
  *           --vus 200 \
  *           --duration 5m \
- *           -e BASE_URL=http://localhost:3000 \
+ *           -e BASE_URL=http://localhost:3023 \
  *           -e CURSO_ID=1 \
  *           tests/loadtest/evaluacion-flow.k6.js
  *
@@ -40,8 +40,8 @@ import { check, sleep, fail } from "k6";
 // Opción A — atacar la lógica directamente (más simple, mide solo el backend):
 //     -e BASE_URL=http://localhost:2000 -e PREFIX=/base_logica
 // Opción B — atacar el controlador (mide stack completo: proxy + lógica):
-//     (defaults)  → controlador en :3000 con prefijo /controlador_base
-const BASE_URL = __ENV.BASE_URL || "http://localhost:3000";
+//     (defaults)  → controlador en :3023 con prefijo /controlador_base
+const BASE_URL = __ENV.BASE_URL || "http://localhost:3023";
 const PREFIX = __ENV.PREFIX || "/controlador_base";
 const CURSO_ID = parseInt(__ENV.CURSO_ID || "1", 10);
 const THINK_TIME_MS = parseInt(__ENV.THINK_TIME_MS || "1500", 10);

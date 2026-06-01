@@ -28,7 +28,10 @@ module.exports = {
         },
     ],
     security: {
-        jwtSecret: "AURIS_DEV_SECRET_CHANGE_ME",
+        // DEBE coincidir EXACTAMENTE con el secret del controlador
+        // (env/development.js → param_base_jwt_password) o la auth entre
+        // capas falla. En producción se define vía la env var JWT_SECRET.
+        jwtSecret: "AURIS_LOCAL_DEV_SECRET_CHANGE_ME",
         jwtAccessExpiresIn: "8h",
         jwtRefreshExpiresIn: "7d",
         bcryptRounds: 12,

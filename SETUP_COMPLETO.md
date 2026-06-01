@@ -9,7 +9,7 @@ Auris son **4 repos** que se comunican entre sí:
 | # | Repo | Qué es | Puerto |
 |---|------|--------|--------|
 | 1 | `app_kinesiologia_logica` | Backend Node (acceso a BD + Mongo) | `2000` |
-| 2 | `app_kinesiologia_controlador` | Backend Node (proxy + JWT + entrada pública) | `3000` |
+| 2 | `app_kinesiologia_controlador` | Backend Node (proxy + JWT + entrada pública) | `3023` |
 | 3 | `app_kinesiologia_panel` | Web Ionic/Angular para docentes y admin | `4200` |
 | 4 | `app_kinesiologia_frontend` | App móvil Ionic/Angular para estudiantes | `4201` |
 
@@ -24,7 +24,7 @@ Cómo se hablan:
 [panel :4200]  [frontend :4201]
        \           /
         ↓ HTTP    ↓ HTTP
-     [controlador :3000]
+     [controlador :3023]
               ↓ HTTP
          [lógica :2000] ──→ SQL Server :1433
                        └──→ MongoDB :27017
@@ -246,7 +246,7 @@ Debe terminar con:
 Servidor escuchando en puerto 2000
 ```
 
-### Terminal 2 — Controlador (puerto 3000)
+### Terminal 2 — Controlador (puerto 3023)
 
 ```powershell
 cd app_kinesiologia_controlador
@@ -256,7 +256,7 @@ npm run dev
 Espera a ver:
 
 ```
-Servidor escuchando en puerto 3000
+Servidor escuchando en puerto 3023
 ```
 
 ### Terminal 3 — Panel web (puerto 4200, para docentes/admin)
@@ -351,7 +351,7 @@ Luego repite el paso 3 (aplicar los 2 SQL).
 | `DB pool no inicializado para code="auris"` | La lógica arrancó antes que SQL Server estuviera listo | Apaga la lógica y reinicia |
 | `[mongo] no disponible` al subir archivos | MongoDB no está corriendo | services.msc → MongoDB → Start |
 | `Bucket fs_videos no disponible` | No corriste init_mongo.js | Repite el paso 4 |
-| El frontend no llega al backend (CORS, 404) | El controlador no está corriendo | Verifica terminal 2 (puerto 3000) |
+| El frontend no llega al backend (CORS, 404) | El controlador no está corriendo | Verifica terminal 2 (puerto 3023) |
 | `Capacitor CLI requires NodeJS >=22.0.0` | Estás en Node 22+ | Cambia a Node 20.19.0 con nvm-windows |
 | `ERESOLVE rxjs` al instalar el frontend móvil | Conflicto Cordova legacy | Agrega `--legacy-peer-deps` |
 | Port 1433 ya en uso | Otra instancia de SQL Server | Apaga la otra o cambia el puerto en `env/local.js` |
@@ -372,8 +372,8 @@ Luego repite el paso 3 (aplicar los 2 SQL).
 | `app_kinesiologia_logica/database/mongodb/init_mongo.js` | Crea buckets GridFS |
 | `app_kinesiologia_logica/database/SETUP.md` | Setup detallado de BD con Docker (alternativa para Mac) |
 | `app_kinesiologia_logica/database/mongodb/SETUP_MONGO.md` | Setup detallado de Mongo |
-| `app_kinesiologia_logica/database/AurisDB_dump.sql` | (legacy) Esquema viejo + seeds antiguos — no usar |
-| `app_kinesiologia_logica/database/2026-05-28_limpiar_y_reseedear.sql` | (legacy) Migraciones + limpieza — incluidas en INSTALL.sql |
+| `app_kinesiologia_logica/database/PROD_db_user.sql` | (producción) Usuario de BD con privilegios mínimos |
+| `app_kinesiologia_logica/database/PROD_superadmin.sql` | (producción) Seed del superadmin con clave fuerte |
 
 ---
 

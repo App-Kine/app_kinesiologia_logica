@@ -31,7 +31,7 @@ k6 run tests/loadtest/evaluacion-flow.k6.js
 k6 run \
     --vus 200 \
     --duration 5m \
-    -e BASE_URL=http://localhost:3000 \
+    -e BASE_URL=http://localhost:3023 \
     -e CURSO_ID=1 \
     tests/loadtest/evaluacion-flow.k6.js
 
@@ -43,7 +43,7 @@ k6 run -e THINK_TIME_MS=0 tests/loadtest/evaluacion-flow.k6.js
 
 | Variable | Default | Descripción |
 |---|---|---|
-| `BASE_URL` | `http://localhost:3000` | URL del controlador |
+| `BASE_URL` | `http://localhost:3023` | URL del controlador |
 | `CURSO_ID` | `1` | ID del curso que contiene la aplicación a probar |
 | `THINK_TIME_MS` | `1500` | Pausa simulada entre clicks del estudiante |
 

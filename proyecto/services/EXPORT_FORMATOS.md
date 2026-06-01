@@ -32,7 +32,7 @@ repiten en cada fila.
 
 Por ahora se invoca directo:
 ```
-curl -X POST http://localhost:3000/controlador_base/exportarBanco \
+curl -X POST http://localhost:3023/controlador_base/exportarBanco \
      -H "Authorization: Bearer <JWT>" \
      -H "Content-Type: application/json" \
      -d '{"arg":"{}"}' -o banco_auris.csv

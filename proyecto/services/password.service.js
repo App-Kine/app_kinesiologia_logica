@@ -152,7 +152,62 @@ async function resetear(request, response) {
     }
 }
 
+/**
+ * POST /base_logica/cambiarPassword  body.arg = { usuario_id, passwordActual, passwordNueva }
+ *
+ * Cambio de contraseña del usuario AUTENTICADO. El `usuario_id` lo inyecta el
+ * controlador desde el JWT verificado (NO viene del cliente). Verifica la clave
+ * actual con bcrypt, valida la nueva (RNF-13) y que sea distinta de la actual.
+ */
+async function cambiar(request, response) {
+    const b = _leerArg(request);
+    const usuarioId = b.usuario_id;
+    const actual = b.passwordActual || "";
+    const nueva = b.passwordNueva || "";
+    logger.log(`${TAG} cambiar: usuario_id=${usuarioId}`);
+    try {
+        if (!usuarioId) return response.json(reply.error("Sesión no válida"));
+        if (!actual || !nueva) {
+            return response.json(reply.error("Debes ingresar la contraseña actual y la nueva"));
+        }
+
+        const u = await pwRepo.obtenerPorId(usuarioId);
+        if (!u || !u.activo) {
+            return response.json(reply.error("Usuario no encontrado o inactivo"));
+        }
+
+        if (!bcrypt.compareSync(actual, u.password_hash)) {
+            return response.json(reply.error("La contraseña actual no es correcta"));
+        }
+
+        const errs = _validarPassword(nueva);
+        if (errs.length) {
+            return response.json(
+                reply.error("La nueva contraseña debe incluir: " + errs.join(", "))
+            );
+        }
+
+        if (bcrypt.compareSync(nueva, u.password_hash)) {
+            return response.json(
+                reply.error("La nueva contraseña debe ser distinta de la actual")
+            );
+        }
+
+        const rounds =
+            (global.config.security && global.config.security.bcryptRounds) || 12;
+        const nuevoHash = bcrypt.hashSync(nueva, rounds);
+        await pwRepo.cambiarPasswordPorId(usuarioId, nuevoHash);
+
+        logger.log(`${TAG} cambiar: OK usuario_id=${usuarioId}`);
+        response.json(reply.ok({ ok: true }));
+    } catch (e) {
+        logger.log(`${TAG_ERR} cambiar: ${e.message}`, e);
+        response.json(reply.fatal(e));
+    }
+}
+
 module.exports = {
     solicitar,
     resetear,
+    cambiar,
 };

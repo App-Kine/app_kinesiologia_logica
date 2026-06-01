@@ -180,6 +180,77 @@ async function crearUsuarioProfesor(nombre, correo, passwordHash) {
     }
 }
 
+/**
+ * Lista todos los usuarios internos con sus roles (para el panel admin).
+ * Devuelve roles como arreglo de códigos.
+ */
+async function listarUsuarios() {
+    const r = await db.request("auris").query(`
+        SELECT  u.usuario_id,
+                u.nombre,
+                u.correo,
+                u.activo,
+                u.created_at,
+                STRING_AGG(r.codigo, ',') AS roles
+        FROM    auris.usuario u
+        LEFT JOIN auris.usuario_rol ur ON ur.usuario_id = u.usuario_id
+        LEFT JOIN auris.rol r          ON r.rol_id      = ur.rol_id
+        GROUP BY u.usuario_id, u.nombre, u.correo, u.activo, u.created_at
+        ORDER BY u.activo DESC, u.nombre;
+    `);
+    return r.recordset.map((u) => ({
+        usuario_id: u.usuario_id,
+        nombre: u.nombre,
+        correo: u.correo,
+        activo: !!u.activo,
+        created_at: u.created_at,
+        roles: u.roles ? String(u.roles).split(",") : [],
+    }));
+}
+
+/**
+ * Activa/desactiva un usuario (soft-delete). Devuelve filas afectadas.
+ * @param {number} usuarioId
+ * @param {boolean} activo
+ */
+async function setActivoUsuario(usuarioId, activo) {
+    const r = await db
+        .request("auris")
+        .input("usuario_id", db.sql.BigInt, usuarioId)
+        .input("activo", db.sql.Bit, activo ? 1 : 0)
+        .query(`
+            UPDATE auris.usuario
+            SET    activo = @activo, updated_at = SYSUTCDATETIME()
+            WHERE  usuario_id = @usuario_id;
+        `);
+    return r.rowsAffected[0];
+}
+
+/**
+ * ¿El usuario es el ÚNICO superadmin activo? (para no quedarse sin admins).
+ * @param {number} usuarioId
+ * @returns {Promise<boolean>}
+ */
+async function esUltimoSuperadminActivo(usuarioId) {
+    const r = await db
+        .request("auris")
+        .input("usuario_id", db.sql.BigInt, usuarioId)
+        .query(`
+            SELECT
+              (SELECT COUNT(*)
+                 FROM auris.usuario_rol ur
+                 JOIN auris.rol r ON r.rol_id = ur.rol_id
+                 WHERE r.codigo = 'SUPERADMIN' AND ur.usuario_id = @usuario_id) AS esSuper,
+              (SELECT COUNT(*)
+                 FROM auris.usuario_rol ur
+                 JOIN auris.rol r      ON r.rol_id = ur.rol_id
+                 JOIN auris.usuario u  ON u.usuario_id = ur.usuario_id
+                 WHERE r.codigo = 'SUPERADMIN' AND u.activo = 1) AS totalSuperActivos;
+        `);
+    const row = r.recordset[0] || {};
+    return row.esSuper > 0 && row.totalSuperActivos <= 1;
+}
+
 module.exports = {
     findByCorreo,
     findRoles,
@@ -188,4 +259,7 @@ module.exports = {
     guardarRefreshToken,
     correoYaRegistrado,
     crearUsuarioProfesor,
+    listarUsuarios,
+    setActivoUsuario,
+    esUltimoSuperadminActivo,
 };
