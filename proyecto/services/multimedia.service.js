@@ -191,6 +191,10 @@ async function _obtener(request, response, tipo) {
             fileDoc.contentType || "application/octet-stream"
         );
         response.setHeader("Accept-Ranges", "bytes");
+        // Seguridad: evitar que el navegador "adivine" el tipo (content-sniffing)
+        // y servir siempre como adjunto inline. Mitiga XSS por MIME-sniffing.
+        response.setHeader("X-Content-Type-Options", "nosniff");
+        response.setHeader("Content-Disposition", "inline");
 
         const total = fileDoc.length;
         const range = request.headers.range;
@@ -199,19 +203,41 @@ async function _obtener(request, response, tipo) {
             const m = /bytes=(\d*)-(\d*)/.exec(range) || [];
             const start = m[1] ? parseInt(m[1], 10) : 0;
             const end = m[2] ? parseInt(m[2], 10) : total - 1;
+
+            // Range fuera de rango (RFC 7233): si los límites no son válidos o
+            // caen fuera del archivo, respondemos 416 en vez de intentar abrir
+            // un stream con offsets inválidos.
+            if (
+                !Number.isFinite(start) ||
+                !Number.isFinite(end) ||
+                start < 0 ||
+                end < start ||
+                start >= total ||
+                end >= total
+            ) {
+                response.setHeader("Content-Range", `bytes */${total}`);
+                return response.status(416).end();
+            }
+
             response.status(206);
             response.setHeader("Content-Range", `bytes ${start}-${end}/${total}`);
             response.setHeader("Content-Length", end - start + 1);
             return bucket
                 .openDownloadStream(_id, { start, end: end + 1 })
-                .on("error", () => response.end())
+                .on("error", (e) => {
+                    logger.log(`${TAG_ERR} obtener ${tipo}: error en stream (range): ${e.message}`, e);
+                    response.end();
+                })
                 .pipe(response);
         }
 
         response.setHeader("Content-Length", total);
         bucket
             .openDownloadStream(_id)
-            .on("error", () => response.end())
+            .on("error", (e) => {
+                logger.log(`${TAG_ERR} obtener ${tipo}: error en stream: ${e.message}`, e);
+                response.end();
+            })
             .pipe(response);
     } catch (e) {
         logger.log(`${TAG_ERR} obtener ${tipo}: ${e.message}`, e);

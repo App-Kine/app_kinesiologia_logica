@@ -101,7 +101,7 @@ async function login(request, response) {
         }
 
         // 3) Comparar password
-        const ok = bcrypt.compareSync(password, u.password_hash);
+        const ok = await bcrypt.compare(password, u.password_hash);
         if (!ok) {
             await usuarioRepo.registrarIntentoLogin(correo, false, ip);
             return response.json(reply.error("Credenciales inválidas"));
