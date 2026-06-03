@@ -9,7 +9,7 @@
      1. CREATE DATABASE AurisDB (si no existe)
      2. CREATE SCHEMA auris
      3. 11 tablas + índices + triggers + 2 vistas
-     4. 6 usuarios (1 admin, 1 superadmin, 4 profesores)
+     4. 3 usuarios (1 admin, 1 superadmin, 1 profesor)
      5. 3 cursos (KINE-401, KINE-402, KINE-501)
      6. 6 preguntas con alternativas (sin audio/imagen/video roto)
      7. 2 tests + 2 aplicaciones activas para que el estudiante pueda probar
@@ -30,11 +30,8 @@
    CREDENCIALES DE LOGIN
    =====================
      admin@auris.local              ChangeMe!2026     (SUPERADMIN + PROFESOR)
-     superadmin@auris.local         AdminPuro!2026    (SUPERADMIN solo)
-     maria.gonzalez@auris.local     ChangeMe!2026     (PROFESOR)
+     superadmin@auris.local         ChangeMe!2026    (SUPERADMIN solo)
      juan.perez@auris.local         ChangeMe!2026     (PROFESOR)
-     ana.rodriguez@auris.local      ChangeMe!2026     (PROFESOR)
-     carlos.munoz@auris.local       ChangeMe!2026     (PROFESOR)
    ============================================================================= */
 
 SET NOCOUNT ON;
@@ -504,41 +501,31 @@ BEGIN
     INSERT INTO auris.usuario_rol (usuario_id, rol_id) VALUES (@adminId, 1), (@adminId, 2);
 END;
 
--- Superadmin "puro" (solo SUPERADMIN) — password: AdminPuro!2026
+-- Superadmin "puro" (solo SUPERADMIN) — password: ChangeMe!2026
 IF NOT EXISTS (SELECT 1 FROM auris.usuario WHERE correo = 'superadmin@auris.local')
 BEGIN
     DECLARE @superId BIGINT;
     INSERT INTO auris.usuario (nombre, correo, password_hash, activo)
     VALUES (N'Super Admin Demo',
             'superadmin@auris.local',
-            '$2b$12$hyFw8oHxsD3sLtsfSVtR1uNN7cYEGXG4ilwRoxxv8ZNCGbO3TTptC',
+            '$2b$12$dv98sIkhzuXJl9r9RysA3eKOLMlcDBHYCTnYSnsOJQ7ll7lnvkrWO',
             1);
     SET @superId = SCOPE_IDENTITY();
     INSERT INTO auris.usuario_rol (usuario_id, rol_id) VALUES (@superId, 1);
 END;
 
--- 4 profesores — password: ChangeMe!2026
+-- Profesor demo — password: ChangeMe!2026
 DECLARE @hashProf NVARCHAR(255) = '$2b$12$dv98sIkhzuXJl9r9RysA3eKOLMlcDBHYCTnYSnsOJQ7ll7lnvkrWO';
 
-IF NOT EXISTS (SELECT 1 FROM auris.usuario WHERE correo='maria.gonzalez@auris.local')
-    INSERT INTO auris.usuario (nombre, correo, password_hash, activo) VALUES
-        (N'María González', 'maria.gonzalez@auris.local', @hashProf, 1);
 IF NOT EXISTS (SELECT 1 FROM auris.usuario WHERE correo='juan.perez@auris.local')
     INSERT INTO auris.usuario (nombre, correo, password_hash, activo) VALUES
         (N'Juan Pérez', 'juan.perez@auris.local', @hashProf, 1);
-IF NOT EXISTS (SELECT 1 FROM auris.usuario WHERE correo='ana.rodriguez@auris.local')
-    INSERT INTO auris.usuario (nombre, correo, password_hash, activo) VALUES
-        (N'Ana Rodríguez', 'ana.rodriguez@auris.local', @hashProf, 1);
-IF NOT EXISTS (SELECT 1 FROM auris.usuario WHERE correo='carlos.munoz@auris.local')
-    INSERT INTO auris.usuario (nombre, correo, password_hash, activo) VALUES
-        (N'Carlos Muñoz', 'carlos.munoz@auris.local', @hashProf, 1);
 
--- Asignar rol PROFESOR a los 4 (idempotente)
+-- Asignar rol PROFESOR (idempotente)
 INSERT INTO auris.usuario_rol (usuario_id, rol_id)
 SELECT u.usuario_id, 2
 FROM auris.usuario u
-WHERE u.correo IN ('maria.gonzalez@auris.local','juan.perez@auris.local',
-                   'ana.rodriguez@auris.local','carlos.munoz@auris.local')
+WHERE u.correo = 'juan.perez@auris.local'
   AND NOT EXISTS (SELECT 1 FROM auris.usuario_rol ur WHERE ur.usuario_id=u.usuario_id AND ur.rol_id=2);
 
 COMMIT TRAN seed_seguridad;
@@ -583,11 +570,9 @@ DECLARE @adminId BIGINT = (SELECT usuario_id FROM auris.usuario WHERE correo='ad
 ;WITH asignaciones AS (
     SELECT correo_prof, codigo_curso
     FROM (VALUES
-        ('maria.gonzalez@auris.local',  'KINE-401'),
-        ('maria.gonzalez@auris.local',  'KINE-402'),
-        ('juan.perez@auris.local',      'KINE-501'),
-        ('ana.rodriguez@auris.local',   'KINE-401'),
-        ('ana.rodriguez@auris.local',   'KINE-501')
+        ('juan.perez@auris.local',      'KINE-401'),
+        ('juan.perez@auris.local',      'KINE-402'),
+        ('juan.perez@auris.local',      'KINE-501')
     ) AS X(correo_prof, codigo_curso)
 )
 INSERT INTO auris.profesor_curso (usuario_id, curso_id, asignado_por, activo)
@@ -607,9 +592,9 @@ GO
    13. SEED — Preguntas + alternativas (6 preguntas, sin multimedia rota)
    ============================================================================= */
 
-DECLARE @mariaId BIGINT = (SELECT usuario_id FROM auris.usuario WHERE correo='maria.gonzalez@auris.local');
+DECLARE @mariaId BIGINT = (SELECT usuario_id FROM auris.usuario WHERE correo='juan.perez@auris.local'); -- María eliminada: contenido demo reasignado a juan.perez
 DECLARE @juanId  BIGINT = (SELECT usuario_id FROM auris.usuario WHERE correo='juan.perez@auris.local');
-DECLARE @anaId   BIGINT = (SELECT usuario_id FROM auris.usuario WHERE correo='ana.rodriguez@auris.local');
+DECLARE @anaId   BIGINT = (SELECT usuario_id FROM auris.usuario WHERE correo='juan.perez@auris.local'); -- Ana eliminada: contenido demo reasignado a juan.perez
 DECLARE @c401 BIGINT = (SELECT curso_id FROM auris.curso WHERE codigo='KINE-401');
 DECLARE @c402 BIGINT = (SELECT curso_id FROM auris.curso WHERE codigo='KINE-402');
 DECLARE @c501 BIGINT = (SELECT curso_id FROM auris.curso WHERE codigo='KINE-501');
@@ -729,8 +714,8 @@ GO
    14. SEED — Tests + composición test ↔ pregunta
    ============================================================================= */
 
-DECLARE @mariaId BIGINT = (SELECT usuario_id FROM auris.usuario WHERE correo='maria.gonzalez@auris.local');
-DECLARE @anaId   BIGINT = (SELECT usuario_id FROM auris.usuario WHERE correo='ana.rodriguez@auris.local');
+DECLARE @mariaId BIGINT = (SELECT usuario_id FROM auris.usuario WHERE correo='juan.perez@auris.local'); -- María eliminada: contenido demo reasignado a juan.perez
+DECLARE @anaId   BIGINT = (SELECT usuario_id FROM auris.usuario WHERE correo='juan.perez@auris.local'); -- Ana eliminada: contenido demo reasignado a juan.perez
 DECLARE @c401 BIGINT = (SELECT curso_id FROM auris.curso WHERE codigo='KINE-401');
 DECLARE @c501 BIGINT = (SELECT curso_id FROM auris.curso WHERE codigo='KINE-501');
 
@@ -781,8 +766,8 @@ GO
    15. SEED — Aplicaciones activas (para que el estudiante pueda probar)
    ============================================================================= */
 
-DECLARE @mariaId BIGINT = (SELECT usuario_id FROM auris.usuario WHERE correo='maria.gonzalez@auris.local');
-DECLARE @anaId   BIGINT = (SELECT usuario_id FROM auris.usuario WHERE correo='ana.rodriguez@auris.local');
+DECLARE @mariaId BIGINT = (SELECT usuario_id FROM auris.usuario WHERE correo='juan.perez@auris.local'); -- María eliminada: contenido demo reasignado a juan.perez
+DECLARE @anaId   BIGINT = (SELECT usuario_id FROM auris.usuario WHERE correo='juan.perez@auris.local'); -- Ana eliminada: contenido demo reasignado a juan.perez
 DECLARE @c401 BIGINT = (SELECT curso_id FROM auris.curso WHERE codigo='KINE-401');
 DECLARE @c501 BIGINT = (SELECT curso_id FROM auris.curso WHERE codigo='KINE-501');
 DECLARE @t1 BIGINT = (SELECT TOP 1 test_id FROM auris.test WHERE nombre=N'Ruidos pulmonares básicos');

@@ -5,21 +5,21 @@ Los datos relacionales siguen en SQL Server; aquí solo viven los binarios.
 
 ## 1. Tener MongoDB corriendo
 
-### Opción A — Docker local (rápido)
+### Opción A — MongoDB propio (recomendado · sin Docker)
+
+Usa tu instancia de **MongoDB 6+**: una instalación nativa en el servidor, un
+MongoDB existente, o **MongoDB Atlas** (nube). Tu connection string será del estilo:
+
+- Local / nativo: `mongodb://localhost:27017`
+- Atlas / nube: `mongodb+srv://usuario:password@cluster.xxxx.mongodb.net`
+
+### Opción B — Docker (solo desarrollo local, opcional)
+
+Si en tu equipo de desarrollo no tienes MongoDB nativo:
 
 ```bash
-docker run -d --name auris-mongo \
-  -p 27017:27017 \
-  -v auris-mongo-data:/data/db \
-  mongo:7
+docker run -d --name auris-mongo -p 27017:27017 -v auris-mongo-data:/data/db mongo:7
 ```
-
-URI de conexión: `mongodb://localhost:27017`
-
-### Opción B — MongoDB Atlas (nube) o instalación propia
-
-Usa tu connection string, por ejemplo:
-`mongodb+srv://usuario:password@cluster.xxxx.mongodb.net`
 
 ## 2. Inicializar los buckets GridFS
 

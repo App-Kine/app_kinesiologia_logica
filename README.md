@@ -6,6 +6,83 @@ Es la capa que toca SQL Server y MongoDB. Recibe requests del **Controlador** (p
 
 ---
 
+## 📋 Información para la revisión técnica (DTIC / Ciberseguridad)
+
+Esta capa es el **backend de datos**: la única que toca SQL Server y MongoDB. Puerto **2000**, ruta base `/base_logica`. **No debe exponerse a internet** — en producción solo la alcanza el Controlador (3023) dentro de la red interna.
+
+| Ítem solicitado | Sección |
+|---|---|
+| Descripción general | Encabezado + "Módulos clave" |
+| Estructura de carpetas | "🗂 Estructura" |
+| Tecnologías y versiones | "Tecnologías y versiones" (abajo) |
+| Instalación y ejecución | "🚀 Setup para un dev nuevo" |
+| Variables de entorno | "Variables de entorno requeridas" (abajo) |
+| Credenciales de prueba | "Credenciales de prueba" (abajo) |
+| Conexión a la base de datos | `database/SETUP.md` + "Conexión a la base de datos" (abajo) |
+| Endpoints / servicios | "📚 Endpoints" |
+
+### Tecnologías y versiones
+
+| Componente | Versión |
+|---|---|
+| Node.js | ≥ 18 (probado en 20.x) |
+| Express | 4 |
+| SQL Server | 2019+ (driver `mssql` 8) |
+| MongoDB | 6 — GridFS para multimedia (driver `mongodb` 6) |
+| JWT | `jsonwebtoken` 9 (HS256) |
+| Hash de contraseñas | `bcryptjs`, coste 12 |
+| Correo | `nodemailer` 8 |
+| Tests | Jest 29 (28 tests, `npm test`) |
+
+### Variables de entorno requeridas
+
+En **desarrollo** se leen de `env/local.js` / `env/development.js`. En **producción** (`NODE_ENV=production`) se leen de `process.env` (ver `.env.example`):
+
+| Variable | Descripción | Ejemplo |
+|---|---|---|
+| `PORT` | Puerto del servicio | `2000` |
+| `NODE_ENV` | Entorno (`development`/`production`) | `production` |
+| `DB_HOST` / `DB_PORT` | Host y puerto de SQL Server | `localhost` / `1433` |
+| `DB_USER` / `DB_PASS` | Credenciales SQL | `sa` / `••••••` |
+| `DB_NAME` | Base de datos | `AurisDB` |
+| `MONGO_URI` / `MONGO_DB` | MongoDB (multimedia) | `mongodb://localhost:27017` / `auris_media` |
+| `JWT_SECRET` | **Secreto JWT — debe ser idéntico en el Controlador** | (≥ 32 chars aleatorios) |
+| `JWT_ACCESS_EXPIRES_IN` / `JWT_REFRESH_EXPIRES_IN` | Expiración de tokens | `8h` / `7d` |
+| `BCRYPT_ROUNDS` | Coste de bcrypt | `12` |
+| `SMTP_HOST` / `SMTP_PORT` / `SMTP_SECURE` | Servidor de correo saliente | `smtp.gmail.com` / `465` / `true` |
+| `SMTP_USER` / `SMTP_PASS` / `MAIL_FROM` | Cuenta de envío de informes/invitaciones | … |
+| `MAIL_MODE` | `smtp` (envía) o `console` (solo log, no envía) | `smtp` |
+| `CORS_ORIGINS` | Orígenes permitidos, separados por coma | `https://panel.uv.cl` |
+| `FRONTEND_BASE_URL` | URL del panel (links de invitación) | `https://panel.uv.cl` |
+| `INVITACION_EXPIRA_HORAS` | Vencimiento de invitaciones de profesor | `72` |
+| `LOG_JSON` | `1` = logs estructurados en JSON | `1` |
+
+> ⚠️ **Producción:** `JWT_SECRET` debe ser un valor **fuerte y único** (NO el de desarrollo) y las credenciales de SQL/SMTP deben ser propias del entorno productivo. No reutilizar los valores de `env/local.js`.
+
+### Conexión a la base de datos
+
+Paso a paso completo en **[`database/SETUP.md`](database/SETUP.md)**. Resumen:
+
+1. **SQL Server** — crear la base ejecutando [`database/AurisDB_INSTALL.sql`](database/AurisDB_INSTALL.sql): crea el esquema `auris`, todas las tablas, índices, constraints y datos de demo. Para **producción** usar [`database/PROD_superadmin.sql`](database/PROD_superadmin.sql) (sin usuarios de demo; solo un superadmin con contraseña fuerte) + [`database/AurisDB_MIGRATION_indices_dueno.sql`](database/AurisDB_MIGRATION_indices_dueno.sql) (índices de rendimiento).
+2. **MongoDB** — inicializar los buckets GridFS con [`database/mongodb/init_mongo.js`](database/mongodb/init_mongo.js).
+3. Configurar la conexión en `env/local.js` (dev) o vía variables de entorno (prod).
+
+Respaldos y restauración: **[`database/BACKUP.md`](database/BACKUP.md)**.
+
+### Credenciales de prueba
+
+Tras instalar con `AurisDB_INSTALL.sql`, el login (a través del Panel → Controlador) acepta estas cuentas de demo:
+
+| Correo | Contraseña | Rol |
+|---|---|---|
+| `admin@auris.local` | `ChangeMe!2026` | SUPERADMIN + PROFESOR |
+| `superadmin@auris.local` | `ChangeMe!2026` | SUPERADMIN |
+| `juan.perez@auris.local` | `ChangeMe!2026` | PROFESOR |
+
+> Cuentas **solo para pruebas**. En producción se carga únicamente `PROD_superadmin.sql` (un superadmin con contraseña fuerte y única). La app del estudiante es pública y **no requiere credenciales**.
+
+---
+
 ## 🧭 ¿Dónde encaja esto?
 
 Auris está partido en **4 repos**:
@@ -53,7 +130,7 @@ Auris está partido en **4 repos**:
 ## 📦 Stack
 
 - **Node.js 20.x** + **Express 4**
-- **SQL Server 2019+** (vía Docker en local) — driver `mssql`
+- **SQL Server 2019+** (instancia nativa o existente) — driver `mssql`
 - **MongoDB 6+** + GridFS — driver `mongodb` (multimedia)
 - **nodemailer** + Gmail SMTP (invitaciones, recuperación de password, informes)
 - **jsonwebtoken v9** (firma/verifica con algoritmo fijado **HS256**) + **bcryptjs** (auth)
@@ -104,7 +181,6 @@ app_kinesiologia_logica/
 │   ├── production.js
 │   ├── local.js.example        # PLANTILLA (sí versionada)
 │   └── local.js                # ⚠ tu copia local con SECRETS (gitignored)
-├── scripts/                    # utilidades CLI (generar hash, verificar login)
 ├── config.js, index.js, routes.js
 └── package.json
 ```
@@ -113,23 +189,21 @@ app_kinesiologia_logica/
 
 ## 🚀 Setup para un dev nuevo (10 min)
 
-### 1. Levantar SQL Server + MongoDB
+### 1. Tener SQL Server + MongoDB disponibles
 
-```bash
-# SQL Server (Mac/Linux con Docker)
-docker run -e "ACCEPT_EULA=Y" -e "MSSQL_SA_PASSWORD=Martin131*" \
-  -p 1433:1433 --name auris-sql -d \
-  mcr.microsoft.com/azure-sql-edge:latest
+Usa tu instancia de **SQL Server 2019+** y **MongoDB 6+** (las que ya tengas o
+una instalación nativa). **No requiere Docker.**
 
-# MongoDB
-docker run -p 27017:27017 --name auris-mongo -d mongo:6
-```
+> *Solo para desarrollo local en Mac Apple Silicon (opcional):* si no tienes SQL
+> Server nativo, puedes levantar uno con Docker usando la imagen `azure-sql-edge`
+> (ARM) + `mongo:6`. Es opcional y solo para el equipo de desarrollo.
 
 ### 2. Instalar la base de datos
 
-Usá Azure Data Studio, DBeaver o sqlcmd para correr `database/AurisDB_INSTALL.sql` contra el servidor.
-Es un único script **idempotente** (crea esquema + datos seed; podés correrlo varias veces sin duplicar).
-Detalle paso a paso: [`database/SETUP.md`](./database/SETUP.md).
+Con **SSMS**, **Azure Data Studio**, **DBeaver** o **sqlcmd**, ejecutá
+`database/AurisDB_INSTALL.sql` contra el servidor. Es un único script
+**idempotente** (crea esquema + datos seed; podés correrlo varias veces sin
+duplicar). Detalle paso a paso: [`database/SETUP.md`](./database/SETUP.md).
 
 ### 3. Inicializar buckets de Mongo
 
@@ -283,7 +357,7 @@ Todos bajo `http://localhost:2000/base_logica/`.
 
 **`EADDRINUSE puerto 2000`** → ya hay otra instancia corriendo. `lsof -i :2000` y `kill -9 PID`.
 
-**`Login failed for user 'sa'`** → password en `env/local.js` no coincide con el del contenedor Docker. Si reseteaste el container, regenerá el password o el container.
+**`Login failed for user 'sa'`** → la password en `env/local.js` no coincide con la de tu SQL Server. Verificá ambas.
 
 **`ECONNREFUSED 127.0.0.1:27017`** → Mongo no está corriendo. Multimedia se va a deshabilitar pero el resto funciona. Levantá Mongo si lo necesitás.
 
