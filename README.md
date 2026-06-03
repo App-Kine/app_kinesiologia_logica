@@ -61,7 +61,7 @@ En **desarrollo** la config se arma desde `env/development.js` y, si existe, `en
 | `MAIL_MODE` | `smtp` (envía de verdad) o **cualquier otro valor** (`dev`/`console`) = solo loguea en consola, no envía | `smtp` |
 | `CORS_ORIGINS` | Orígenes permitidos, separados por coma | `https://panel.uv.cl` |
 | `FRONTEND_BASE_URL` | URL del panel (links de invitación) | `https://panel.uv.cl` |
-| `INVITACION_EXPIRA_HORAS` | Vencimiento de invitaciones de profesor | `72` |
+| `INVITACION_EXPIRA_HORAS` | Vencimiento de invitaciones de profesor (default `24`; **el código lo limita a un máximo de 48h** por RNF-12) | `24` |
 | `LOG_JSON` | `1` = logs estructurados en JSON | `1` |
 
 > ⚠️ **Producción:** `JWT_SECRET` debe ser un valor **fuerte y único** (NO el de desarrollo) y las credenciales de SQL/SMTP deben ser propias del entorno productivo. No reutilizar los valores de `env/local.js`.
@@ -342,7 +342,7 @@ Nada se borra físicamente. Convención: `UPDATE ... SET activo = 0`. Conserva h
 
 | Módulo | Cubre | Notas |
 |---|---|---|
-| `auth` | login, refresh, bloqueo por intentos | bcrypt cost 12, 8h access / 7d refresh |
+| `auth` | login + emisión de tokens, bloqueo por intentos | bcrypt cost 12; `/login` emite access (8h) + refresh (7d, guardado hasheado). El refresh se renueva en el Controlador, no hay endpoint de refresh en esta capa |
 | `invitacion` | admin invita docente por email | token único 24h |
 | `password` | recuperación + reset por email | token único |
 | `curso` | CRUD cursos del docente | soft-delete |
@@ -404,7 +404,8 @@ Todos los servicios de negocio van por `POST http://localhost:2000/base_logica/<
 | **aplicacion** | `/crearAplicacion`, `/listarAplicaciones`, `/setActivoAplicacion`, `/eliminarAplicacion` | JWT PROFESOR | Aplicar un test a un curso (ventana de visibilidad) |
 | **analitica** | `/analitica/resumen`, `/analitica/aplicacion` | JWT PROFESOR | Dashboards del docente (timing, promedios) |
 | **evaluacion** | `/evaluacion/aplicacionesActivas`, `/evaluacion/iniciar`, `/evaluacion/corregir`, `/evaluacion/enviar` | Público | Flujo del estudiante (sin login). `corregir`/`enviar` = flujo vigente "no persistir incompletas" |
-| | `/evaluacion/responder`, `/evaluacion/finalizar`, `/evaluacion/enviarInforme`, `/evaluacion/informeCompleto` | Público | **Deprecados** — devuelven error pidiendo migrar al flujo nuevo |
+| | `/evaluacion/enviarInforme`, `/evaluacion/informeCompleto` | Público | **Vigentes** — envío del informe por correo (idempotente, PDF adjunto validado) y detalle pregunta a pregunta de una evaluación finalizada |
+| | `/evaluacion/responder`, `/evaluacion/finalizar` | Público | **Deprecados** — devuelven error pidiendo migrar a `/corregir` + `/enviar` |
 | **multimedia** | `/multimedia/subirAudio`, `/multimedia/subirImagen`, `/multimedia/subirVideo`, `/multimedia/eliminar` | JWT PROFESOR | Subida (multipart, GridFS) y borrado |
 | | `GET /multimedia/audio/:id`, `/imagen/:id`, `/video/:id` | Público | Streaming con soporte `Range` (seek) |
 | **health** | `GET /healthz`, `/readyz`, `/health`, `/metrics` (sin prefijo) | Público (interno) | Liveness, readiness, estado detallado y métricas |

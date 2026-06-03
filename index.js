@@ -1,5 +1,34 @@
 "use strict";
 
+/* =============================================================================
+ *  Auris · Capa Lógica — ARRANQUE DEL SERVICIO  (index.js)
+ * -----------------------------------------------------------------------------
+ *  Punto de entrada del backend de datos. Levanta Express en el puerto
+ *  configurado (2000 por defecto) bajo la ruta base /base_logica.
+ *
+ *  ORDEN DE ARRANQUE (ver initApp(), más abajo):
+ *    1. setRequestContext()  → correlación de requests (X-Request-Id).
+ *    2. métricas Prometheus + parsers de body (urlencoded/json) + CORS allowlist.
+ *    3. setConfig()    → carga env/local|development|production.js en global.config.
+ *    4. setDatabases() → abre el/los pool(s) de SQL Server (con reintentos).
+ *    5. setMongo()     → abre MongoDB/GridFS (OPCIONAL).
+ *    6. setRouters()   → monta routers base + proyecto + health.
+ *    7. setErrorHandlers() → error-handler de Express (SIEMPRE al final).
+ *    8. launchApp()    → app.listen().
+ *
+ *  QUÉ PASA SI FALLA UNA DEPENDENCIA AL ARRANCAR:
+ *    · SQL Server: es OBLIGATORIO. setDatabases() reintenta con backoff; si aun
+ *      así no conecta, lanza y el proceso NO levanta (no se llega a launchApp).
+ *      En producción, si faltan las env vars de BD, el pool queda inválido y
+ *      db.initialize() corta el arranque con un error claro.
+ *    · MongoDB: es OPCIONAL (solo multimedia). Si falla, se LOGUEA y la app
+ *      igual arranca; solo se deshabilitan los endpoints de multimedia.
+ *
+ *  La configuración de cada conexión está en env/*.js (SQL en `databases`,
+ *  Mongo en `mongo`). Esta capa NO debe exponerse a internet: en producción
+ *  solo la alcanza el Controlador dentro de la red interna.
+ * ============================================================================= */
+
 var express = require("express");
 var multer = require("multer");
 var methodOverride = require("method-override");
