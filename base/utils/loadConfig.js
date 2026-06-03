@@ -8,12 +8,25 @@ const commonUtils = require("./commonUtils");
 var setEnvironment = async (env) => {
     let envParam = (env || "").trim();
 
-    let localConfig;
+    // Si no se especifica NODE_ENV, por defecto es "development".
     if (envParam === "") {
+        envParam = "development";
+    }
+
+    // Cargar env/local.js (gitignored) SIEMPRE que exista, EXCEPTO en producción.
+    // Sus valores sobreescriben los del archivo de entorno (merge profundo): es
+    // donde cada dev pone su password de SQL/SMTP y su JWT secret local.
+    //
+    // IMPORTANTE: antes esto solo ocurría cuando NODE_ENV estaba vacío, así que
+    // arrancar con NODE_ENV=development (`npm run dev-unix`) NO tomaba local.js y
+    // fallaba la conexión a SQL ("Login failed for user 'sa'"). Ahora se carga
+    // en cualquier entorno no productivo, de modo que `npm start` y
+    // `npm run dev-unix` funcionan igual. En producción NO se carga local.js
+    // (la config viene de env/production.js + variables de entorno).
+    let localConfig;
+    if (envParam !== "production") {
         let localPath = path.resolve(__dirname, `../../env/local.js`);
         if (fileUtils.fileCheck(localPath)) localConfig = require(localPath);
-
-        envParam = "development"; //Por defecto
     }
 
     let envConfig = require(path.resolve(
