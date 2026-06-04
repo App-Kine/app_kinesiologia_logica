@@ -5,14 +5,18 @@
    profesores, etc. con la clave por defecto 'ChangeMe!2026'). Solo se crea
    UN superadmin con una contraseña FUERTE y única.
 
-   PASOS:
-     1) Generar el hash bcrypt de tu clave fuerte (valida la política RNF-13:
-        min 10, mayúscula, minúscula, número y símbolo):
+   FORMA MÁS SIMPLE (recomendada, sin tocar este archivo):
+     Instala con AurisDB_INSTALL.sql (crea admin@auris.local), entra al panel con
+     ese admin y cambia su contraseña + correo desde la app. La app hashea sola
+     (no necesitas generar hashes a mano).
 
-            cd app_kinesiologia_logica
-            node scripts/generar_hash.js "TuClaveFuerte!2026"
+   ALTERNATIVA SOLO-SQL (este archivo, para crear un superadmin desde cero):
+     1) Generar el hash bcrypt de tu clave fuerte (política RNF-13: min 10,
+        mayúscula, minúscula, número y símbolo). Desde app_kinesiologia_logica:
 
-     2) Copiar el "Hash bcrypt:" que imprime y pegarlo en @hash de abajo.
+            node -e "console.log(require('bcryptjs').hashSync('TuClaveFuerte!2026', 12))"
+
+     2) Copiar el hash que imprime y pegarlo en @hash de abajo.
      3) Poner el correo institucional real del admin en @correo.
      4) Ejecutar este script contra la BD de PRODUCCIÓN.
 
@@ -27,10 +31,10 @@ IF NOT EXISTS (SELECT 1 FROM auris.rol WHERE rol_id = 1)
 GO
 
 DECLARE @correo NVARCHAR(254) = N'CAMBIAR@dominio-institucional';   -- correo real
-DECLARE @hash   NVARCHAR(255) = N'PEGAR_HASH_BCRYPT_DE_generar_hash.js';
+DECLARE @hash   NVARCHAR(255) = N'PEGAR_HASH_BCRYPT_AQUI';
 DECLARE @nombre NVARCHAR(120) = N'Administrador Auris';
 
-IF (@hash = N'PEGAR_HASH_BCRYPT_DE_generar_hash.js' OR @correo LIKE N'CAMBIAR@%')
+IF (@hash = N'PEGAR_HASH_BCRYPT_AQUI' OR @correo LIKE N'CAMBIAR@%')
 BEGIN
     RAISERROR('Debes definir @correo y @hash reales antes de ejecutar.', 16, 1);
     RETURN;

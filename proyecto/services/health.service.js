@@ -16,6 +16,7 @@
 
 var db = require("../../base/utils/db");
 var mongo = require("../../base/utils/mongo");
+var metricsUtil = require("../../base/utils/metrics");
 
 const TAG = "\x1b[36m[health]\x1b[0m";
 
@@ -109,4 +110,10 @@ async function detailed(request, response) {
     });
 }
 
-module.exports = { liveness, readiness, detailed };
+/** Métricas en formato texto Prometheus (scrapeo de Grafana/Prometheus). */
+function metrics(_request, response) {
+    response.setHeader("Content-Type", "text/plain; version=0.0.4");
+    response.send(metricsUtil.render("logica"));
+}
+
+module.exports = { liveness, readiness, detailed, metrics };

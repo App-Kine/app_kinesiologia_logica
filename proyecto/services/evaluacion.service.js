@@ -14,11 +14,34 @@ var mailer = require("../../base/utils/mailer");
 var evalRepo = require("../repositories/evaluacion.repository");
 // Bloque P3.R9: utilidades compartidas
 var { leerArg, RE_CORREO } = require("../../base/utils/argReader");
+var { maskEmail } = require("../../base/utils/seguridad");
 
 const TAG = "\x1b[36m[evaluacion]\x1b[0m";
 const TAG_ERR = "\x1b[31m[evaluacion]\x1b[0m";
 
+// UUID v4 (UNIQUEIDENTIFIER). El informe se pide por este identificador
+// público y no adivinable, nunca por el evaluacion_id secuencial (evita que
+// un tercero enumere IDs y extraiga correos/resultados de otros estudiantes).
+const RE_UUID = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+
 function _leerArg(request) { return leerArg(request, { tag: TAG_ERR }); }
+
+/**
+ * Resuelve el evaluacion_id interno a partir del UUID público recibido del
+ * cliente. Devuelve { ok, evaluacionId, errorResponse }. Si el UUID falta, es
+ * inválido o no existe, deja listo el response de error genérico.
+ */
+async function _resolverEvaluacionPorUuid(b, response) {
+    const evaluacionUuid = b.evaluacionUuid ? String(b.evaluacionUuid).trim() : "";
+    if (!RE_UUID.test(evaluacionUuid)) {
+        return { ok: false, errorResponse: () => response.json(reply.error("evaluacionUuid requerido")) };
+    }
+    const evaluacionId = await evalRepo.resolverIdPorUuid(evaluacionUuid);
+    if (!Number.isInteger(evaluacionId) || evaluacionId <= 0) {
+        return { ok: false, errorResponse: () => response.json(reply.error("Evaluación no encontrada")) };
+    }
+    return { ok: true, evaluacionId: evaluacionId };
+}
 
 /** POST /evaluacion/aplicacionesActivas  body: { cursoId } */
 async function aplicacionesActivas(request, response) {
@@ -414,17 +437,18 @@ function _construirInforme(info, detalle) {
 }
 
 /**
- * POST /evaluacion/enviarInforme  body: { evaluacionId }
+ * POST /evaluacion/enviarInforme  body: { evaluacionUuid }
  * Envía por correo el informe de una evaluación FINALIZADA e IDENTIFICADA
- * (RF-41/42). Marca informe_enviado_en al despachar.
+ * (RF-41/42). Marca informe_enviado_en al despachar. Se identifica por UUID
+ * público (no por el id secuencial, que sería enumerable sin login).
  */
 async function enviarInforme(request, response) {
     const b = _leerArg(request);
-    const evaluacionId = Number(b.evaluacionId);
-    logger.log(`${TAG} enviarInforme: eval=${evaluacionId}`);
+    logger.log(`${TAG} enviarInforme: uuid=${b.evaluacionUuid}`);
     try {
-        if (!Number.isInteger(evaluacionId) || evaluacionId <= 0)
-            return response.json(reply.error("evaluacionId requerido"));
+        const res = await _resolverEvaluacionPorUuid(b, response);
+        if (!res.ok) return res.errorResponse();
+        const evaluacionId = res.evaluacionId;
 
         const info = await evalRepo.obtenerInforme(evaluacionId);
         if (!info) return response.json(reply.error("Evaluación no encontrada"));
@@ -435,19 +459,76 @@ async function enviarInforme(request, response) {
                 reply.error("Esta evaluación es anónima: no hay un correo al cual enviar el informe")
             );
 
+        // Idempotencia (RF-41/42): si el informe ya se despachó antes, NO lo
+        // reenviamos. `obtenerInforme` ya trae `informe_enviado_en`; si tiene
+        // valor respondemos OK marcando que ya estaba enviado, evitando correos
+        // duplicados ante reintentos del cliente.
+        if (info.informe_enviado_en) {
+            logger.log(`${TAG} enviarInforme: ya enviado previamente, no se reenvía correo=${maskEmail(info.correo_estudiante)}`);
+            return response.json(
+                reply.ok({
+                    enviado: true,
+                    yaEnviado: true,
+                    correo: info.correo_estudiante,
+                })
+            );
+        }
+
         const detalle = await evalRepo.obtenerDetallePorPregunta(evaluacionId);
         const { html, text } = _construirInforme(info, detalle);
+
+        // Adjuntar el PDF que generó la app (solo pasa en memoria; no se guarda).
+        // Validamos que sea base64 plausible y acotamos el tamaño (~8MB de
+        // base64). Si no cumple, enviamos el correo SIN adjunto y logueamos, en
+        // vez de tirar un error fatal y perder el informe.
+        const adjuntos = [];
+        if (b.pdfBase64 && typeof b.pdfBase64 === "string") {
+            const pdfLimpio = b.pdfBase64.replace(/[\r\n]/g, "");
+            const RE_BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
+            const MAX_PDF_BASE64 = 8 * 1024 * 1024; // ~8MB de base64
+            if (!RE_BASE64.test(pdfLimpio)) {
+                logger.log(`${TAG_ERR} enviarInforme: pdfBase64 no parece base64 válido, se omite el adjunto`);
+            } else if (pdfLimpio.length > MAX_PDF_BASE64) {
+                logger.log(`${TAG_ERR} enviarInforme: pdfBase64 demasiado grande (${pdfLimpio.length} bytes), se omite el adjunto`);
+            } else {
+                const nombrePdf =
+                    "Auris-informe-" +
+                    String(info.test_nombre || "resultado")
+                        .replace(/[^a-zA-Z0-9-_]+/g, "_")
+                        .slice(0, 60) +
+                    ".pdf";
+                adjuntos.push({
+                    filename: nombrePdf,
+                    content: pdfLimpio,
+                    encoding: "base64",
+                    contentType: "application/pdf",
+                });
+            }
+        }
 
         const r = await mailer.send({
             to: info.correo_estudiante,
             subject: `Auris — Tu informe de resultados: ${info.test_nombre}`,
             html,
             text,
+            attachments: adjuntos,
         });
 
-        await evalRepo.marcarInformeEnviado(evaluacionId);
+        // El correo YA salió. Si el marcado en BD falla (p.ej. timeout SQL), NO
+        // debemos responder fatal: el cliente reintentaría y se enviaría un
+        // correo duplicado. Capturamos ese error puntual, lo logueamos y
+        // respondemos OK igual. Solo un fallo de `mailer.send` (arriba) propaga
+        // error real.
+        try {
+            await evalRepo.marcarInformeEnviado(evaluacionId);
+        } catch (eMarcar) {
+            logger.log(
+                `${TAG_ERR} enviarInforme: correo enviado OK pero falló marcarInformeEnviado: ${eMarcar.message}`,
+                eMarcar
+            );
+        }
 
-        logger.log(`${TAG} enviarInforme: OK correo=${info.correo_estudiante} modo=${r && r.mode}`);
+        logger.log(`${TAG} enviarInforme: OK correo=${maskEmail(info.correo_estudiante)} modo=${r && r.mode}`);
         response.json(
             reply.ok({
                 enviado: true,
@@ -462,10 +543,15 @@ async function enviarInforme(request, response) {
 }
 
 /**
- * POST /evaluacion/informeCompleto   body: { evaluacionId }
+ * POST /evaluacion/informeCompleto   body: { evaluacionUuid }
  * Devuelve el detalle completo para descargar como PDF (pedido cliente
  * 2026-05-26). PÚBLICO: aplica tanto a evaluaciones anónimas como
  * identificadas, no requiere JWT (igual que el resto del flujo estudiante).
+ *
+ * Seguridad: se identifica por el UUID público (UNIQUEIDENTIFIER, no
+ * adivinable). NO acepta el evaluacion_id secuencial — de lo contrario
+ * cualquiera podría enumerar IDs y extraer correos + resultados de otros
+ * estudiantes en este endpoint sin autenticación.
  *
  * Devuelve: cabecera + lista de preguntas con todas las alternativas,
  * cuál marcó el estudiante en cada intento, cuál era la correcta,
@@ -473,11 +559,11 @@ async function enviarInforme(request, response) {
  */
 async function informeCompleto(request, response) {
     const b = _leerArg(request);
-    const evaluacionId = Number(b.evaluacionId);
-    logger.log(`${TAG} informeCompleto: eval=${evaluacionId}`);
+    logger.log(`${TAG} informeCompleto: uuid=${b.evaluacionUuid}`);
     try {
-        if (!Number.isInteger(evaluacionId) || evaluacionId <= 0)
-            return response.json(reply.error("evaluacionId requerido"));
+        const res = await _resolverEvaluacionPorUuid(b, response);
+        if (!res.ok) return res.errorResponse();
+        const evaluacionId = res.evaluacionId;
 
         const info = await evalRepo.obtenerInforme(evaluacionId);
         if (!info) return response.json(reply.error("Evaluación no encontrada"));

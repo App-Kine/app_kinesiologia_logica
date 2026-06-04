@@ -83,8 +83,25 @@ async function listar(request, response) {
     const cc = Number(b.cursoId);
     const profesorId = Number.isInteger(cp) && cp > 0 ? cp : null;
     const cursoId = Number.isInteger(cc) && cc > 0 ? cc : null;
-    logger.log(`${TAG} listar: profesorId=${profesorId || 'todos'} cursoId=${cursoId || 'todos'}`);
+
+    // Paginación opcional (escalabilidad). Con pageSize > 0 devuelve un envelope
+    // { items, page, pageSize, hasMore }; sin él, un array (compatible hacia atrás).
+    const ps = Number(b.pageSize);
+    const pg = Number(b.page);
+    const paginar = Number.isInteger(ps) && ps > 0;
+    const pageSize = paginar ? Math.min(ps, 100) : null;
+    const page = paginar && Number.isInteger(pg) && pg > 0 ? pg : 1;
+
+    logger.log(`${TAG} listar: profesorId=${profesorId || 'todos'} cursoId=${cursoId || 'todos'}${paginar ? ` page=${page} size=${pageSize}` : ''}`);
     try {
+        if (paginar) {
+            const offset = (page - 1) * pageSize;
+            const rows = await aplicacionRepo.listarPorProfesor(profesorId, cursoId, { limit: pageSize + 1, offset });
+            const hasMore = rows.length > pageSize;
+            const items = hasMore ? rows.slice(0, pageSize) : rows;
+            logger.log(`${TAG} listar: OK (page ${page}, ${items.length} filas, hasMore=${hasMore})`);
+            return response.json(reply.ok({ items, page, pageSize, hasMore }));
+        }
         const data = await aplicacionRepo.listarPorProfesor(profesorId, cursoId);
         logger.log(`${TAG} listar: OK (${data.length} filas)`);
         response.json(reply.ok(data));
@@ -97,7 +114,11 @@ async function listar(request, response) {
 async function setActivo(request, response) {
     const b = _leerArg(request);
     const aplicacionId = Number(b.aplicacionId);
-    logger.log(`${TAG} setActivo: id=${b.aplicacionId} coerced=${aplicacionId} activo=${b.activo}`);
+    // Dueño inyectado por el controlador desde el JWT (RNF-19). Si viene, el
+    // repo solo actualiza la aplicación cuando pertenece a este profesor.
+    const cp = Number(b.profesorId);
+    const profesorId = Number.isInteger(cp) && cp > 0 ? cp : null;
+    logger.log(`${TAG} setActivo: id=${b.aplicacionId} coerced=${aplicacionId} activo=${b.activo} prof=${profesorId || 'sin-filtro'}`);
     try {
         if (!Number.isInteger(aplicacionId) || aplicacionId <= 0) {
             logger.log(`${TAG} setActivo: validación falló — aplicacionId inválido`);
@@ -107,9 +128,9 @@ async function setActivo(request, response) {
             logger.log(`${TAG} setActivo: validación falló — activo no booleano`);
             return response.json(reply.error("activo (boolean) requerido"));
         }
-        const ok = await aplicacionRepo.setActivo(aplicacionId, b.activo);
+        const ok = await aplicacionRepo.setActivo(aplicacionId, b.activo, profesorId);
         if (!ok) {
-            logger.log(`${TAG} setActivo: no encontrada (id=${aplicacionId})`);
+            logger.log(`${TAG} setActivo: no encontrada o ajena (id=${aplicacionId} prof=${profesorId || 'sin-filtro'})`);
             return response.json(reply.error("Aplicación no encontrada"));
         }
         logger.log(`${TAG} setActivo: OK id=${aplicacionId}`);
@@ -135,7 +156,11 @@ async function setActivo(request, response) {
 async function eliminar(request, response) {
     const b = _leerArg(request);
     const aplicacionId = Number(b.aplicacionId);
-    logger.log(`${TAG} eliminar: id=${aplicacionId}`);
+    // Dueño inyectado por el controlador desde el JWT (RNF-19). Si viene, solo
+    // el profesor propietario puede borrar la aplicación (evita write-IDOR).
+    const cp = Number(b.profesorId);
+    const profesorId = Number.isInteger(cp) && cp > 0 ? cp : null;
+    logger.log(`${TAG} eliminar: id=${aplicacionId} prof=${profesorId || 'sin-filtro'}`);
     try {
         if (!Number.isInteger(aplicacionId) || aplicacionId <= 0)
             return response.json(reply.error("aplicacionId requerido"));
@@ -146,6 +171,30 @@ async function eliminar(request, response) {
         // así nadie puede insertar evaluaciones en medio.
         await tx.begin(db.sql.ISOLATION_LEVEL.SERIALIZABLE);
         try {
+            // Verificación de dueño dentro de la transacción: si la aplicación no
+            // existe o es de otro profesor, devolvemos el mismo mensaje genérico
+            // (no filtra existencia de IDs ajenos).
+            const rOwner = await new db.sql.Request(tx)
+                .input("aplicacion_id", db.sql.BigInt, aplicacionId)
+                .input("profesor_id", db.sql.BigInt, profesorId)
+                .query(`
+                    SELECT  profesor_id
+                    FROM    auris.aplicacion_test
+                    WHERE   aplicacion_id = @aplicacion_id;
+                `);
+            if (rOwner.recordset.length === 0) {
+                await tx.rollback();
+                return response.json(reply.error("Aplicación no encontrada"));
+            }
+            if (
+                profesorId !== null &&
+                Number(rOwner.recordset[0].profesor_id) !== profesorId
+            ) {
+                await tx.rollback();
+                logger.log(`${TAG} eliminar: DENEGADO id=${aplicacionId} dueño=${rOwner.recordset[0].profesor_id} solicita=${profesorId}`);
+                return response.json(reply.error("Aplicación no encontrada"));
+            }
+
             const rEval = await new db.sql.Request(tx)
                 .input("aplicacion_id", db.sql.BigInt, aplicacionId)
                 .query(`

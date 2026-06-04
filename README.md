@@ -6,6 +6,90 @@ Es la capa que toca SQL Server y MongoDB. Recibe requests del **Controlador** (p
 
 ---
 
+## 📋 Información para la revisión técnica (DTIC / Ciberseguridad)
+
+Esta capa es el **backend de datos**: la única que toca SQL Server y MongoDB. Puerto **2000**, ruta base `/base_logica`. **No debe exponerse a internet** — en producción solo la alcanza el Controlador (3023) dentro de la red interna.
+
+| Ítem solicitado | Sección |
+|---|---|
+| Descripción general | Encabezado + "Módulos clave" |
+| Estructura de carpetas | "🗂 Estructura" |
+| Tecnologías y versiones | "Tecnologías y versiones" (abajo) |
+| Instalación y ejecución | "🚀 Setup para un dev nuevo" |
+| Variables de entorno | "Variables de entorno requeridas" (abajo) |
+| Credenciales de prueba | "Credenciales de prueba" (abajo) |
+| Conexión a la base de datos | `database/SETUP.md` + "Conexión a la base de datos" (abajo) |
+| Endpoints / servicios | "📚 Endpoints / servicios" |
+| Tests / validación | "🧪 Tests y validación" (183 tests Jest) |
+| Setup completo (4 repos) | [`SETUP_COMPLETO.md`](./SETUP_COMPLETO.md) |
+| Seguridad / handoff producción | [`SEGURIDAD_PRODUCCION.md`](./SEGURIDAD_PRODUCCION.md) |
+
+### Tecnologías y versiones
+
+| Componente | Versión | Notas |
+|---|---|---|
+| Node.js | ≥ 18 (recomendado y probado en **20.x**) | — |
+| Express | 4 (`express` ^4.17) | servidor HTTP |
+| SQL Server | 2019+ (driver `mssql` ^8.1) | base `AurisDB` (datos) |
+| MongoDB | 6+ — GridFS (driver `mongodb` ^6.21) | base `auris_media` (multimedia) |
+| JWT | `jsonwebtoken` ^9 (algoritmo fijado **HS256**) | el control de auth lo aplica el Controlador |
+| Hash de contraseñas | `bcryptjs` ^3, coste **12** | — |
+| Uploads | `multer` ^1.4 (memoryStorage) | multimedia directa desde el frontend |
+| Correo | `nodemailer` ^8 | invitaciones, reset de password, informes |
+| Dev runner | `nodemon` ^3 | recarga en caliente |
+| Tests | **Jest 29 — 183 tests** (`npm test`) | 15 suites, todas en verde |
+
+> El proyecto **no usa TypeScript ni un framework adicional**: es JavaScript (CommonJS) sobre Express. Las versiones exactas están en [`package.json`](./package.json) (este repo es `base_logica` v1.0.5, `base_version` 3.0.0).
+
+### Variables de entorno requeridas
+
+En **desarrollo** la config se arma desde `env/development.js` y, si existe, `env/local.js` la **sobreescribe** (merge profundo; `localDatabases` reemplaza a `databases`). Si hay `env/local.js`, `NODE_ENV` interno pasa a `local`. En **producción** (`NODE_ENV=production`, archivo `env/production.js`) los valores se toman de `process.env` (ver [`.env.example`](./.env.example)). Tabla exhaustiva en [`CONFIG_REFERENCE.md`](./CONFIG_REFERENCE.md):
+
+| Variable | Descripción | Ejemplo |
+|---|---|---|
+| `PORT` | Puerto del servicio | `2000` |
+| `NODE_ENV` | Entorno (`development`/`production`) | `production` |
+| `DB_HOST` / `DB_PORT` | Host y puerto de SQL Server | `localhost` / `1433` |
+| `DB_USER` / `DB_PASS` | Credenciales SQL | `sa` / `••••••` |
+| `DB_NAME` | Base de datos | `AurisDB` |
+| `MONGO_URI` / `MONGO_DB` | MongoDB (multimedia) | `mongodb://localhost:27017` / `auris_media` |
+| `JWT_SECRET` | **Secreto JWT — debe ser idéntico en el Controlador** | (≥ 32 chars aleatorios) |
+| `JWT_ACCESS_EXPIRES_IN` / `JWT_REFRESH_EXPIRES_IN` | Expiración de tokens | `8h` / `7d` |
+| `BCRYPT_ROUNDS` | Coste de bcrypt | `12` |
+| `SMTP_HOST` / `SMTP_PORT` / `SMTP_SECURE` | Servidor de correo saliente | `smtp.gmail.com` / `465` / `true` |
+| `SMTP_USER` / `SMTP_PASS` / `MAIL_FROM` | Cuenta de envío de informes/invitaciones | … |
+| `MAIL_MODE` | `smtp` (envía de verdad) o **cualquier otro valor** (`dev`/`console`) = solo loguea en consola, no envía | `smtp` |
+| `CORS_ORIGINS` | Orígenes permitidos, separados por coma | `https://panel.uv.cl` |
+| `FRONTEND_BASE_URL` | URL del panel (links de invitación) | `https://panel.uv.cl` |
+| `INVITACION_EXPIRA_HORAS` | Vencimiento de invitaciones de profesor (default `24`; **el código lo limita a un máximo de 48h** por RNF-12) | `24` |
+| `LOG_JSON` | `1` = logs estructurados en JSON | `1` |
+
+> ⚠️ **Producción:** `JWT_SECRET` debe ser un valor **fuerte y único** (NO el de desarrollo) y las credenciales de SQL/SMTP deben ser propias del entorno productivo. No reutilizar los valores de `env/local.js`.
+
+### Conexión a la base de datos
+
+Paso a paso completo en **[`database/SETUP.md`](database/SETUP.md)**. Resumen:
+
+1. **SQL Server** — crear la base ejecutando [`database/AurisDB_INSTALL.sql`](database/AurisDB_INSTALL.sql): crea el esquema `auris`, todas las tablas, índices, constraints y datos de demo. Para **producción** usar [`database/PROD_db_user.sql`](database/PROD_db_user.sql) (usuario de BD con privilegios mínimos) y [`database/PROD_superadmin.sql`](database/PROD_superadmin.sql) (sin usuarios de demo; solo un superadmin con contraseña fuerte), más los índices de rendimiento [`AurisDB_MIGRATION_indices_dueno.sql`](database/AurisDB_MIGRATION_indices_dueno.sql) y [`AurisDB_MIGRATION_indices_rendimiento.sql`](database/AurisDB_MIGRATION_indices_rendimiento.sql).
+2. **MongoDB** — inicializar los buckets GridFS con [`database/mongodb/init_mongo.js`](database/mongodb/init_mongo.js).
+3. Configurar la conexión en `env/local.js` (dev) o vía variables de entorno (prod).
+
+Respaldos y restauración: **[`database/BACKUP.md`](database/BACKUP.md)**.
+
+### Credenciales de prueba
+
+Tras instalar con `AurisDB_INSTALL.sql`, el login (a través del Panel → Controlador) acepta estas cuentas de demo:
+
+| Correo | Contraseña | Rol |
+|---|---|---|
+| `admin@auris.local` | `ChangeMe!2026` | SUPERADMIN + PROFESOR |
+| `superadmin@auris.local` | `ChangeMe!2026` | SUPERADMIN |
+| `juan.perez@auris.local` | `ChangeMe!2026` | PROFESOR |
+
+> Cuentas **solo para pruebas**. En producción se carga únicamente `PROD_superadmin.sql` (un superadmin con contraseña fuerte y única). La app del estudiante es pública y **no requiere credenciales**.
+
+---
+
 ## 🧭 ¿Dónde encaja esto?
 
 Auris está partido en **4 repos**:
@@ -53,7 +137,7 @@ Auris está partido en **4 repos**:
 ## 📦 Stack
 
 - **Node.js 20.x** + **Express 4**
-- **SQL Server 2019+** (vía Docker en local) — driver `mssql`
+- **SQL Server 2019+** (instancia nativa o existente) — driver `mssql`
 - **MongoDB 6+** + GridFS — driver `mongodb` (multimedia)
 - **nodemailer** + Gmail SMTP (invitaciones, recuperación de password, informes)
 - **jsonwebtoken v9** (firma/verifica con algoritmo fijado **HS256**) + **bcryptjs** (auth)
@@ -77,26 +161,30 @@ app_kinesiologia_logica/
 │       ├── logConsola.js       # logger global
 │       └── loadConfig.js       # carga env/local|development|production.js
 ├── proyecto/
-│   ├── routes/                 # 12 routers Express
-│   │   ├── auth.router.js
-│   │   ├── invitacion.router.js
-│   │   ├── password.router.js    # solicitarReset, resetearPassword, cambiarPassword
-│   │   ├── usuario.router.js      # listarUsuarios, cambiarEstadoUsuario (admin)
+│   ├── routes/                 # routers Express (mapean ruta → service)
+│   │   ├── auth.router.js          # login
+│   │   ├── invitacion.router.js    # crear/verificar/completar/listar invitaciones
+│   │   ├── password.router.js      # solicitarReset, resetearPassword, cambiarPassword
+│   │   ├── usuario.router.js       # listarUsuarios, cambiarEstadoUsuario (admin)
 │   │   ├── curso.router.js
-│   │   ├── pregunta.router.js
+│   │   ├── pregunta.router.js      # CRUD + agregar/quitar de test + exportarBanco (CSV)
 │   │   ├── test.router.js
 │   │   ├── aplicacion.router.js
-│   │   ├── evaluacion.router.js
+│   │   ├── evaluacion.router.js    # flujo del estudiante (público)
 │   │   ├── analitica.router.js
-│   │   ├── multimedia.router.js
-│   │   └── ejemplo.router.js
+│   │   ├── multimedia.router.js    # GridFS (multer)
+│   │   └── health.router.js        # /healthz /readyz /health /metrics (sin prefijo)
 │   ├── services/               # validación, JWT, bcrypt, orquestación
 │   └── repositories/           # ÚNICA capa que hace queries SQL/Mongo
 ├── database/
-│   ├── AurisDB_INSTALL.sql     # instalación completa (schema + seed), idempotente — CANÓNICO
+│   ├── AurisDB_INSTALL.sql                       # instalación completa (schema + seed), idempotente — CANÓNICO
+│   ├── AurisDB_MIGRATION_indices_dueno.sql       # índices por dueño (rendimiento)
+│   ├── AurisDB_MIGRATION_indices_rendimiento.sql # índices adicionales de rendimiento
 │   ├── PROD_db_user.sql        # usuario de BD con privilegios mínimos (producción)
 │   ├── PROD_superadmin.sql     # seed del superadmin para producción (clave fuerte)
-│   ├── mongodb/init_mongo.js   # init de buckets GridFS
+│   ├── mongodb/
+│   │   ├── init_mongo.js       # init de buckets GridFS
+│   │   └── SETUP_MONGO.md      # guía de Mongo
 │   ├── BACKUP.md               # estrategia de backup/restore
 │   └── SETUP.md                # guía paso a paso de la BD
 ├── env/
@@ -104,7 +192,11 @@ app_kinesiologia_logica/
 │   ├── production.js
 │   ├── local.js.example        # PLANTILLA (sí versionada)
 │   └── local.js                # ⚠ tu copia local con SECRETS (gitignored)
-├── scripts/                    # utilidades CLI (generar hash, verificar login)
+├── tests/                      # 183 tests Jest (services, repositories, utils)
+├── .env.example                # plantilla de variables para producción
+├── CONFIG_REFERENCE.md         # referencia exhaustiva de toda la config
+├── SETUP_COMPLETO.md           # guía de los 4 repos en una máquina nueva
+├── SEGURIDAD_PRODUCCION.md     # checklist de handoff para DTIC / Ciberseguridad
 ├── config.js, index.js, routes.js
 └── package.json
 ```
@@ -113,29 +205,31 @@ app_kinesiologia_logica/
 
 ## 🚀 Setup para un dev nuevo (10 min)
 
-### 1. Levantar SQL Server + MongoDB
+### 1. Tener SQL Server + MongoDB disponibles
 
-```bash
-# SQL Server (Mac/Linux con Docker)
-docker run -e "ACCEPT_EULA=Y" -e "MSSQL_SA_PASSWORD=Martin131*" \
-  -p 1433:1433 --name auris-sql -d \
-  mcr.microsoft.com/azure-sql-edge:latest
+Usa tu instancia de **SQL Server 2019+** y **MongoDB 6+** (las que ya tengas o
+una instalación nativa). **No requiere Docker.**
 
-# MongoDB
-docker run -p 27017:27017 --name auris-mongo -d mongo:6
-```
+> *Solo para desarrollo local en Mac Apple Silicon (opcional):* si no tienes SQL
+> Server nativo, puedes levantar uno con Docker usando la imagen `azure-sql-edge`
+> (ARM) + `mongo:6`. Es opcional y solo para el equipo de desarrollo.
 
 ### 2. Instalar la base de datos
 
-Usá Azure Data Studio, DBeaver o sqlcmd para correr `database/AurisDB_INSTALL.sql` contra el servidor.
-Es un único script **idempotente** (crea esquema + datos seed; podés correrlo varias veces sin duplicar).
-Detalle paso a paso: [`database/SETUP.md`](./database/SETUP.md).
+Con **SSMS**, **Azure Data Studio**, **DBeaver** o **sqlcmd**, ejecutá
+`database/AurisDB_INSTALL.sql` contra el servidor. Es un único script
+**idempotente** (crea esquema + datos seed; podés correrlo varias veces sin
+duplicar). Detalle paso a paso: [`database/SETUP.md`](./database/SETUP.md).
 
 ### 3. Inicializar buckets de Mongo
 
+El script usa la conexión de `env/local.js` (o las variables `MONGO_URI` / `MONGO_DB`):
+
 ```bash
-mongosh < database/mongodb/init_mongo.js
+node database/mongodb/init_mongo.js
 ```
+
+> Detalle en [`database/mongodb/SETUP_MONGO.md`](./database/mongodb/SETUP_MONGO.md). Mongo es **opcional**: si no está disponible, la lógica igual arranca y solo se deshabilitan los endpoints de multimedia.
 
 ### 4. Configurar credenciales locales
 
@@ -148,16 +242,26 @@ cp env/local.js.example env/local.js
 
 ### 5. Instalar y arrancar
 
+`npm install` ya instala `nodemon` (devDependency), no hace falta instalarlo global:
+
 ```bash
 npm install
-npm run dev-unix
-# Mac/Linux: NODE_ENV=development nodemon index.js
-# Windows: npm run dev
+npm run dev-unix      # Mac/Linux → NODE_ENV=development nodemon index.js
+# Windows:  npm run dev
+# Producción: npm run prod-unix   (Mac/Linux)  /  npm run prod  (Windows)
 ```
 
-Verás:
+Verás algo como:
 ```
 [base_logica] Env: LOCAL, Port: 2000, Path: /base_logica, Tipo: LOGICA, v: 1.0.5
+```
+
+La lógica queda escuchando en `http://localhost:2000/base_logica/`. En desarrollo puedes sondear su salud sin tocar la BD:
+
+```bash
+curl http://localhost:2000/healthz     # liveness  → 200 si el proceso vive
+curl http://localhost:2000/readyz      # readiness → 200 si SQL responde
+curl http://localhost:2000/health      # estado detallado (SQL + Mongo)
 ```
 
 ---
@@ -238,7 +342,7 @@ Nada se borra físicamente. Convención: `UPDATE ... SET activo = 0`. Conserva h
 
 | Módulo | Cubre | Notas |
 |---|---|---|
-| `auth` | login, refresh, bloqueo por intentos | bcrypt cost 12, 8h access / 7d refresh |
+| `auth` | login + emisión de tokens, bloqueo por intentos | bcrypt cost 12; `/login` emite access (8h) + refresh (7d, guardado hasheado). El refresh se renueva en el Controlador, no hay endpoint de refresh en esta capa |
 | `invitacion` | admin invita docente por email | token único 24h |
 | `password` | recuperación + reset por email | token único |
 | `curso` | CRUD cursos del docente | soft-delete |
@@ -251,31 +355,60 @@ Nada se borra físicamente. Convención: `UPDATE ... SET activo = 0`. Conserva h
 
 ---
 
-## 🧪 Verificar que todo compile
+## 🧪 Tests y validación
+
+**Suite de pruebas (Jest):** 183 tests en 15 suites (services, repositories, utils). No requieren BD real — usan mocks/stubs.
 
 ```bash
-# Validación rápida de sintaxis JS
+npm test               # corre las 183 pruebas (jest --runInBand)
+npm run test:coverage  # con reporte de cobertura (umbral mínimo: 60% líneas)
+npm run test:watch     # modo watch durante el desarrollo
+```
+
+Salida esperada:
+```
+Test Suites: 15 passed, 15 total
+Tests:       183 passed, 183 total
+```
+
+**Validación rápida de sintaxis** (sin levantar nada):
+```bash
 find proyecto base -name "*.js" -not -path "*/node_modules/*" \
   -exec node --check {} \;
 # (sin output = OK)
 ```
 
+**Formato (Prettier):** `npm run prettier-c` (check) / `npm run prettier-w` (write).
+
 ---
 
-## 📚 Endpoints (mapa rápido)
+## 📚 Endpoints / servicios
 
-Todos bajo `http://localhost:2000/base_logica/`.
+Todos los servicios de negocio van por `POST http://localhost:2000/base_logica/<ruta>` (los health checks van **sin** prefijo: `/healthz`, `/readyz`, `/health`, `/metrics`).
 
-> El control de auth/rol lo aplica el **controlador** antes de reenviar acá (la
-> lógica es interna). La columna "Auth" describe esa exigencia.
+> El control de auth/rol lo aplica el **Controlador** (3023) **antes** de reenviar acá; esta capa es interna. La columna "Auth" describe esa exigencia que impone el controlador. El body de los POST llega envuelto como `arg=urlencoded(JSON.stringify(params))`, salvo multimedia (multipart).
 
-**Públicos** (sin JWT): `login`, `evaluacion/*`, `verificarInvitacion`, `completarInvitacion`, `solicitarReset`, `resetearPassword`, `multimedia/audio|imagen|video/:id`
+### Mapa de servicios por módulo
 
-**Requieren JWT (usuario logueado)**: `cambiarPassword`
-
-**Requieren JWT PROFESOR**: `pregunta/*`, `test/*`, `aplicacion/*`, `cursos/*`, `analitica/*`, `multimedia/subir*`, `multimedia/eliminar`
-
-**Requieren JWT SUPERADMIN**: `crearInvitacion`, `listarInvitaciones`, `listarUsuarios`, `cambiarEstadoUsuario`
+| Módulo | Rutas (POST salvo indicación) | Auth | Propósito |
+|---|---|---|---|
+| **auth** | `/login` | Público | Login (correo+password), emite access/refresh JWT |
+| **password** | `/solicitarReset`, `/resetearPassword` | Público | Recuperación de contraseña por email (token único) |
+| | `/cambiarPassword` | JWT (logueado) | Cambio de contraseña del usuario autenticado |
+| **invitacion** | `/verificarInvitacion`, `/completarInvitacion` | Público | El docente invitado valida el token y crea su cuenta |
+| | `/crearInvitacion`, `/listarInvitaciones` | JWT SUPERADMIN | Admin invita/lista docentes |
+| **usuario** | `/listarUsuarios`, `/cambiarEstadoUsuario` | JWT SUPERADMIN | Gestión de usuarios (alta/baja lógica) |
+| **curso** | `/cursos/listar`, `/cursos/detalle`, `/cursos/misCursos`, `/cursos/crear`, `/cursos/obtener`, `/cursos/editar`, `/cursos/eliminar`, `/cursos/ping` | JWT PROFESOR | CRUD de cursos del docente (soft-delete) |
+| **pregunta** | `/crearPregunta`, `/listarPreguntas`, `/obtenerPregunta`, `/editarPregunta`, `/eliminarPregunta`, `/agregarPreguntaATest`, `/quitarPreguntaDeTest`, `/exportarBanco` | JWT PROFESOR | Banco de preguntas (HTML + multimedia) y export CSV |
+| **test** | `/crearTest`, `/listarTests`, `/obtenerTest`, `/editarTest`, `/eliminarTest` | JWT PROFESOR | CRUD de tests y vínculo con preguntas |
+| **aplicacion** | `/crearAplicacion`, `/listarAplicaciones`, `/setActivoAplicacion`, `/eliminarAplicacion` | JWT PROFESOR | Aplicar un test a un curso (ventana de visibilidad) |
+| **analitica** | `/analitica/resumen`, `/analitica/aplicacion` | JWT PROFESOR | Dashboards del docente (timing, promedios) |
+| **evaluacion** | `/evaluacion/aplicacionesActivas`, `/evaluacion/iniciar`, `/evaluacion/corregir`, `/evaluacion/enviar` | Público | Flujo del estudiante (sin login). `corregir`/`enviar` = flujo vigente "no persistir incompletas" |
+| | `/evaluacion/enviarInforme`, `/evaluacion/informeCompleto` | Público | **Vigentes** — envío del informe por correo (idempotente, PDF adjunto validado) y detalle pregunta a pregunta de una evaluación finalizada |
+| | `/evaluacion/responder`, `/evaluacion/finalizar` | Público | **Deprecados** — devuelven error pidiendo migrar a `/corregir` + `/enviar` |
+| **multimedia** | `/multimedia/subirAudio`, `/multimedia/subirImagen`, `/multimedia/subirVideo`, `/multimedia/eliminar` | JWT PROFESOR | Subida (multipart, GridFS) y borrado |
+| | `GET /multimedia/audio/:id`, `/imagen/:id`, `/video/:id` | Público | Streaming con soporte `Range` (seek) |
+| **health** | `GET /healthz`, `/readyz`, `/health`, `/metrics` (sin prefijo) | Público (interno) | Liveness, readiness, estado detallado y métricas |
 
 ---
 
@@ -283,7 +416,7 @@ Todos bajo `http://localhost:2000/base_logica/`.
 
 **`EADDRINUSE puerto 2000`** → ya hay otra instancia corriendo. `lsof -i :2000` y `kill -9 PID`.
 
-**`Login failed for user 'sa'`** → password en `env/local.js` no coincide con el del contenedor Docker. Si reseteaste el container, regenerá el password o el container.
+**`Login failed for user 'sa'`** → la password en `env/local.js` no coincide con la de tu SQL Server. Verificá ambas.
 
 **`ECONNREFUSED 127.0.0.1:27017`** → Mongo no está corriendo. Multimedia se va a deshabilitar pero el resto funciona. Levantá Mongo si lo necesitás.
 

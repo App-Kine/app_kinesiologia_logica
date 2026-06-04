@@ -36,7 +36,7 @@ código y qué debe ajustar el equipo de infraestructura al pasar a producción.
    - Ejecutar `database/PROD_db_user.sql` → crea el usuario `auris_app` (CRUD sobre el esquema `auris`, sin `sa`). Configurar `DB_USER=auris_app`.
 
 6. **Seed de producción sin credenciales por defecto.**
-   - Ejecutar `database/PROD_superadmin.sql` (NO el seed demo). Crea solo el superadmin con clave fuerte generada por `scripts/generar_hash.js`.
+   - Definir el superadmin con clave fuerte: entrar al panel con `admin@auris.local` (del instalador) y cambiar su contraseña + correo desde la app (la app hashea sola), o usar el SQL `database/PROD_superadmin.sql`. NO dejar las claves demo por defecto.
    - No cargar los usuarios demo (`ChangeMe!2026`).
 
 ## ☐ Hardening recomendado (opcional, suma en la revisión)

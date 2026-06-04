@@ -66,13 +66,27 @@ async function crearAplicacion(testId, cursoId, profesorId) {
 /**
  * Lista aplicaciones por profesor responsable y/o curso.
  * Ambos parámetros son opcionales: null = sin filtro por ese campo.
+ *
+ * Paginación opcional (escalabilidad): si `opciones.limit` es un entero > 0 se
+ * agrega OFFSET/FETCH NEXT. Sin opciones, devuelve TODO (compatible hacia atrás).
  */
-async function listarPorProfesor(profesorId, cursoId) {
-    const r = await db
+async function listarPorProfesor(profesorId, cursoId, opciones = {}) {
+    const { limit, offset } = opciones;
+    const paginar = Number.isInteger(limit) && limit > 0;
+
+    const req = db
         .request("auris")
         .input("profesor_id", db.sql.BigInt, profesorId || null)
-        .input("curso_id", db.sql.BigInt, cursoId || null)
-        .query(`
+        .input("curso_id", db.sql.BigInt, cursoId || null);
+
+    let paginacionSql = "";
+    if (paginar) {
+        req.input("offset", db.sql.Int, Number.isInteger(offset) && offset > 0 ? offset : 0);
+        req.input("limit", db.sql.Int, limit);
+        paginacionSql = "OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY";
+    }
+
+    const r = await req.query(`
             SELECT  a.aplicacion_id,
                     a.aplicacion_uuid,
                     a.test_id,
@@ -92,24 +106,31 @@ async function listarPorProfesor(profesorId, cursoId) {
               AND   (@curso_id IS NULL OR a.curso_id = @curso_id)
               AND   t.activo = 1
               AND   c.activo = 1
-            ORDER BY a.created_at DESC;
+            ORDER BY a.created_at DESC
+            ${paginacionSql};
         `);
     return r.recordset;
 }
 
 /**
  * Activa o desactiva una aplicación (RF-91).
+ *
+ * profesorId (opcional): si se entrega, el UPDATE solo afecta a la aplicación
+ * cuando pertenece a ese profesor (RNF-19 — evita write-IDOR: pausar/activar
+ * la aplicación de otro docente). Si es null, no se filtra por dueño.
  */
-async function setActivo(aplicacionId, activo) {
+async function setActivo(aplicacionId, activo, profesorId) {
     const r = await db
         .request("auris")
         .input("aplicacion_id", db.sql.BigInt, aplicacionId)
         .input("activo", db.sql.Bit, activo ? 1 : 0)
+        .input("profesor_id", db.sql.BigInt, profesorId || null)
         .query(`
             UPDATE auris.aplicacion_test
             SET    activo = @activo,
                    updated_at = SYSUTCDATETIME()
-            WHERE  aplicacion_id = @aplicacion_id;
+            WHERE  aplicacion_id = @aplicacion_id
+              AND  (@profesor_id IS NULL OR profesor_id = @profesor_id);
             SELECT @@ROWCOUNT AS filas;
         `);
     return r.recordset[0].filas > 0;

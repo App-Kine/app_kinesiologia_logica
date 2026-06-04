@@ -7,6 +7,10 @@
  * Cada desarrollador define sus credenciales locales en env/local.js
  * (gitignored). Si env/local.js existe al arrancar con `npm run start`, sus
  * valores sobreescriben los de este archivo.
+ *
+ * Los placeholders de abajo (password "CHANGE_ME_IN_LOCAL_JS", jwtSecret de dev)
+ * son SOLO para desarrollo local. La CONFIGURACIÓN PRODUCCIÓN no usa este
+ * archivo: ver env/production.js (lee de variables de entorno / secretos).
  */
 module.exports = {
     app: {

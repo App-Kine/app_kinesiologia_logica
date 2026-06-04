@@ -17,6 +17,7 @@ const crypto = require("crypto");
 
 const reply = require("../../base/utils/reply");
 const mailer = require("../../base/utils/mailer");
+const { escapeHtml, maskEmail } = require("../../base/utils/seguridad");
 const pwRepo = require("../repositories/password.repository");
 
 const TAG = "\x1b[36m[password]\x1b[0m";
@@ -58,7 +59,7 @@ function _validarPassword(p) {
 async function solicitar(request, response) {
     const b = _leerArg(request);
     const correo = (b.correo || "").trim().toLowerCase();
-    logger.log(`${TAG} solicitar: correo=${correo}`);
+    logger.log(`${TAG} solicitar: correo=${maskEmail(correo)}`);
     try {
         if (!correo || !RE_CORREO.test(correo)) {
             return response.json(reply.error("Correo inválido"));
@@ -87,7 +88,7 @@ async function solicitar(request, response) {
                 to: correo,
                 subject: "Auris — recuperación de contraseña",
                 text: `Hola ${usuario.nombre || ""},\n\nRecibimos una solicitud para restablecer tu contraseña.\nAbre el siguiente enlace (válido por ${RESET_TTL_MIN} minutos):\n\n${link}\n\nSi no fuiste tú, ignora este correo.\n\n— Equipo Auris`,
-                html: `<p>Hola ${usuario.nombre || ""},</p><p>Recibimos una solicitud para restablecer tu contraseña.</p><p><a href="${link}">Restablecer mi contraseña</a></p><p>El enlace vence en ${RESET_TTL_MIN} minutos. Si no fuiste tú, ignora este correo.</p>`,
+                html: `<p>Hola ${escapeHtml(usuario.nombre || "")},</p><p>Recibimos una solicitud para restablecer tu contraseña.</p><p><a href="${link}">Restablecer mi contraseña</a></p><p>El enlace vence en ${RESET_TTL_MIN} minutos. Si no fuiste tú, ignora este correo.</p>`,
                 devLink: link,
             });
             devLink = r && r.devLink ? r.devLink : null;
@@ -140,7 +141,7 @@ async function resetear(request, response) {
 
         const rounds =
             (global.config.security && global.config.security.bcryptRounds) || 12;
-        const passwordHash = bcrypt.hashSync(password, rounds);
+        const passwordHash = await bcrypt.hash(password, rounds);
 
         await pwRepo.aplicarNuevaPassword(reset.reset_id, reset.usuario_id, passwordHash);
 
@@ -176,7 +177,7 @@ async function cambiar(request, response) {
             return response.json(reply.error("Usuario no encontrado o inactivo"));
         }
 
-        if (!bcrypt.compareSync(actual, u.password_hash)) {
+        if (!(await bcrypt.compare(actual, u.password_hash))) {
             return response.json(reply.error("La contraseña actual no es correcta"));
         }
 
@@ -187,7 +188,7 @@ async function cambiar(request, response) {
             );
         }
 
-        if (bcrypt.compareSync(nueva, u.password_hash)) {
+        if (await bcrypt.compare(nueva, u.password_hash)) {
             return response.json(
                 reply.error("La nueva contraseña debe ser distinta de la actual")
             );
@@ -195,7 +196,7 @@ async function cambiar(request, response) {
 
         const rounds =
             (global.config.security && global.config.security.bcryptRounds) || 12;
-        const nuevoHash = bcrypt.hashSync(nueva, rounds);
+        const nuevoHash = await bcrypt.hash(nueva, rounds);
         await pwRepo.cambiarPasswordPorId(usuarioId, nuevoHash);
 
         logger.log(`${TAG} cambiar: OK usuario_id=${usuarioId}`);

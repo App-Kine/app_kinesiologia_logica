@@ -16,21 +16,38 @@ let _createResp = (status, message, value, type, level, code, trace) => {
     };
 
     if (value != undefined && value != null) {
-        resp.data = JSON.parse(JSON.stringify(value));
+        // Antes se hacía JSON.parse(JSON.stringify(value)): doble serialización
+        // innecesaria. structuredClone hace una copia profunda en una sola
+        // pasada nativa (mantiene el contrato de "copia distinta del original"
+        // sin compartir referencias). Express serializa el response final.
+        resp.data = structuredClone(value);
     }
 
     if (status == status_error) {
+        // Confidencialidad (ISO 25010 — Seguridad): en producción NUNCA
+        // exponemos el stack trace al cliente (fuga de rutas internas,
+        // versiones, estructura del código). El logging del stack al servidor
+        // se conserva en otras capas (CORS res.send / errorTracker). En dev se
+        // mantiene el trace para depurar.
+        const esProduccion = process.env.NODE_ENV === "production";
+        let traceSalida;
+        if (esProduccion) {
+            traceSalida = "";
+        } else {
+            traceSalida =
+                trace == undefined
+                    ? ""
+                    : trace instanceof Object
+                    ? trace
+                    : trace.split("\n");
+        }
+
         resp.error = {
             type: type,
             level: level,
             code: code == undefined || code == null ? code_error : code,
             message: message,
-            trace:
-                trace == undefined
-                    ? ""
-                    : trace instanceof Object
-                    ? trace
-                    : trace.split("\n"),
+            trace: traceSalida,
         };
     }
 

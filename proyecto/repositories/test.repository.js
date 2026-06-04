@@ -67,12 +67,27 @@ async function crearTestConPreguntas(t) {
 
 /**
  * Lista tests creados por un profesor (o todos si null).
+ *
+ * Paginación opcional (escalabilidad): si `opciones.limit` es un entero > 0 se
+ * agrega OFFSET/FETCH NEXT. Sin opciones, devuelve TODO (comportamiento previo,
+ * 100% compatible hacia atrás).
  */
-async function listarPorProfesor(profesorId) {
-    const r = await db
+async function listarPorProfesor(profesorId, opciones = {}) {
+    const { limit, offset } = opciones;
+    const paginar = Number.isInteger(limit) && limit > 0;
+
+    const req = db
         .request("auris")
-        .input("profesor_id", db.sql.BigInt, profesorId || null)
-        .query(`
+        .input("profesor_id", db.sql.BigInt, profesorId || null);
+
+    let paginacionSql = "";
+    if (paginar) {
+        req.input("offset", db.sql.Int, Number.isInteger(offset) && offset > 0 ? offset : 0);
+        req.input("limit", db.sql.Int, limit);
+        paginacionSql = "OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY";
+    }
+
+    const r = await req.query(`
             SELECT  t.test_id,
                     t.nombre,
                     t.descripcion,
@@ -87,7 +102,8 @@ async function listarPorProfesor(profesorId) {
             LEFT JOIN auris.curso c ON c.curso_id = t.curso_origen_id
             WHERE   t.activo = 1
               AND  (@profesor_id IS NULL OR t.creado_por = @profesor_id)
-            ORDER BY t.created_at DESC;
+            ORDER BY t.created_at DESC
+            ${paginacionSql};
         `);
     return r.recordset;
 }

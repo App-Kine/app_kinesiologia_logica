@@ -92,7 +92,7 @@ Auris/
 
 **Hay UN SOLO archivo que hace todo:** `app_kinesiologia_logica/database/AurisDB_INSTALL.sql`.
 
-Crea la BD `AurisDB`, las 16 tablas, índices, vistas, triggers, los 6 usuarios de demo, 3 cursos, 6 preguntas con sus alternativas, 2 tests y 2 aplicaciones activas. Listo para usar de inmediato.
+Crea la BD `AurisDB`, las 16 tablas, índices, vistas, triggers, los 3 usuarios de demo, 3 cursos, 6 preguntas con sus alternativas, 2 tests y 2 aplicaciones activas. Listo para usar de inmediato.
 
 ### Cómo aplicarlo (SSMS, lo más fácil)
 
@@ -133,7 +133,7 @@ JOIN auris.rol r ON r.rol_id = ur.rol_id
 GROUP BY correo ORDER BY correo;
 ```
 
-Debes ver 6 usuarios (admin, superadmin, maría, juan, ana, carlos).
+Debes ver 3 usuarios (admin, superadmin, juan).
 
 ---
 
@@ -288,10 +288,8 @@ Entra a **http://localhost:4200** y prueba con cualquiera de estos usuarios:
 | Correo | Password | Te lleva a |
 |---|---|---|
 | `admin@auris.local` | `ChangeMe!2026` | Pantalla de selección (admin + docente) |
-| `superadmin@auris.local` | `AdminPuro!2026` | Panel admin (invitar profesores) |
-| `maria.gonzalez@auris.local` | `ChangeMe!2026` | Panel docente |
+| `superadmin@auris.local` | `ChangeMe!2026` | Panel admin (invitar profesores) |
 | `juan.perez@auris.local` | `ChangeMe!2026` | Panel docente |
-| `ana.rodriguez@auris.local` | `ChangeMe!2026` | Panel docente |
 
 Como docente deberías ver tus cursos asignados, tests, aplicaciones y analítica.
 
@@ -370,7 +368,7 @@ Luego repite el paso 3 (aplicar los 2 SQL).
 | `app_kinesiologia_logica/env/local.js.example` | Plantilla |
 | **`app_kinesiologia_logica/database/AurisDB_INSTALL.sql`** | **Instalación completa de la BD en un solo archivo (el que vas a usar)** |
 | `app_kinesiologia_logica/database/mongodb/init_mongo.js` | Crea buckets GridFS |
-| `app_kinesiologia_logica/database/SETUP.md` | Setup detallado de BD con Docker (alternativa para Mac) |
+| `app_kinesiologia_logica/database/SETUP.md` | Setup detallado de la BD (SQL Server + MongoDB, sin Docker) |
 | `app_kinesiologia_logica/database/mongodb/SETUP_MONGO.md` | Setup detallado de Mongo |
 | `app_kinesiologia_logica/database/PROD_db_user.sql` | (producción) Usuario de BD con privilegios mínimos |
 | `app_kinesiologia_logica/database/PROD_superadmin.sql` | (producción) Seed del superadmin con clave fuerte |

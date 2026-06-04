@@ -57,6 +57,7 @@ async function resumenAplicacion(aplicacionId) {
                     c.nombre  AS curso_nombre,
                     apl.test_id,
                     t.nombre  AS test_nombre,
+                    apl.profesor_id,
                     apl.activo,
                     ISNULL(vp.total_evaluaciones, 0)        AS total_evaluaciones,
                     ISNULL(vp.evaluaciones_anonimas, 0)     AS evaluaciones_anonimas,

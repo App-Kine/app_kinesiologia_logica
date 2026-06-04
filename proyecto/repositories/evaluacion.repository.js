@@ -380,6 +380,27 @@ async function finalizarEvaluacion(evaluacionId, aplicacionId) {
 }
 
 /**
+ * Resuelve el evaluacion_id (BigInt interno) a partir del evaluacion_uuid
+ * público (UNIQUEIDENTIFIER no adivinable). Devuelve el número o null.
+ *
+ * Seguridad (auditoría 2026-06-01): el flujo del estudiante es público (sin
+ * login), así que el informe NO puede identificarse por el id secuencial
+ * —sería enumerable y filtraría correos + resultados de otros alumnos—. El
+ * cliente solo conoce el UUID que recibió al enviar su propia evaluación.
+ */
+async function resolverIdPorUuid(evaluacionUuid) {
+    const r = await db
+        .request("auris")
+        .input("evaluacion_uuid", db.sql.UniqueIdentifier, evaluacionUuid)
+        .query(`
+            SELECT  evaluacion_id
+            FROM    auris.evaluacion
+            WHERE   evaluacion_uuid = @evaluacion_uuid;
+        `);
+    return r.recordset[0] ? Number(r.recordset[0].evaluacion_id) : null;
+}
+
+/**
  * Datos completos de una evaluación finalizada para armar el informe por
  * correo (RF-41/42): totales + correo del estudiante + test/curso. Null si no.
  */
@@ -543,6 +564,91 @@ async function corregirIntento(preguntaId, alternativaId, intento) {
 }
 
 /**
+ * Versión BATCH de _datosCorreccion para varias preguntas a la vez (evita N+1).
+ *
+ * Trae en UNA sola query todas las alternativas (id, pregunta_id, es_correcta) de
+ * las preguntas involucradas con `IN (...)` —mismo patrón que `cargarPreguntas`—
+ * más la explicación clínica de cada pregunta. Con eso resuelve EN MEMORIA, para
+ * cada par (pregunta, alternativa elegida), exactamente lo mismo que devolvía
+ * `_datosCorreccion`:
+ *   - null  → la alternativa NO pertenece a la pregunta (ALT_INVALIDA)
+ *   - { esCorrecta, correctaId, explicacion } → corrección válida
+ *
+ * @param {number[]} preguntaIds  ids de pregunta únicos a cargar.
+ * @returns {Promise<Map<string, {esCorrecta:boolean, correctaId:number, explicacion:any}>>}
+ *          función resolver: dado (preguntaId, alternativaId) devuelve el objeto
+ *          de corrección o null. Se expone como `.resolver(preguntaId, altId)`.
+ */
+async function _cargarCorreccionBatch(preguntaIds) {
+    const pool = db.getPool("auris");
+    const ids = [...new Set(preguntaIds.map((x) => Number(x)))];
+
+    // Explicación clínica + alternativa correcta por pregunta.
+    const reqPreg = pool.request();
+    const phPreg = ids.map((_, i) => {
+        reqPreg.input(`q${i}`, db.sql.BigInt, ids[i]);
+        return `@q${i}`;
+    });
+    const rPreg = await reqPreg.query(`
+        SELECT  p.pregunta_id,
+                p.explicacion_clinica,
+                (SELECT alternativa_id FROM auris.alternativa
+                   WHERE pregunta_id = p.pregunta_id AND es_correcta = 1) AS correcta_id
+        FROM    auris.pregunta p
+        WHERE   p.pregunta_id IN (${phPreg.join(",")});
+    `);
+
+    const infoPregunta = {}; // pregunta_id → { explicacion, correctaId }
+    for (const row of rPreg.recordset) {
+        infoPregunta[String(row.pregunta_id)] = {
+            explicacion: row.explicacion_clinica,
+            correctaId: row.correcta_id != null ? Number(row.correcta_id) : null,
+        };
+    }
+
+    // Todas las alternativas de esas preguntas (para validar pertenencia + es_correcta).
+    const reqAlt = pool.request();
+    const phAlt = ids.map((_, i) => {
+        reqAlt.input(`a${i}`, db.sql.BigInt, ids[i]);
+        return `@a${i}`;
+    });
+    const rAlt = await reqAlt.query(`
+        SELECT alternativa_id, pregunta_id, es_correcta
+        FROM   auris.alternativa
+        WHERE  pregunta_id IN (${phAlt.join(",")});
+    `);
+
+    // Mapa (pregunta_id + "|" + alternativa_id) → es_correcta booleano.
+    const altIndex = {};
+    for (const a of rAlt.recordset) {
+        const k = `${a.pregunta_id}|${a.alternativa_id}`;
+        altIndex[k] = a.es_correcta === true || a.es_correcta === 1;
+    }
+
+    return {
+        /**
+         * Réplica exacta de _datosCorreccion(preguntaId, alternativaId) pero en
+         * memoria. Devuelve null si la alternativa no pertenece a la pregunta.
+         */
+        resolver(preguntaId, alternativaId) {
+            const k = `${Number(preguntaId)}|${Number(alternativaId)}`;
+            if (!(k in altIndex)) {
+                return null; // alternativa no pertenece a la pregunta
+            }
+            const info = infoPregunta[String(Number(preguntaId))] || {
+                explicacion: null,
+                correctaId: null,
+            };
+            return {
+                explicacion: info.explicacion,
+                correctaId: info.correctaId,
+                esCorrecta: altIndex[k],
+            };
+        },
+    };
+}
+
+/**
  * Crea evaluación + respuestas + finaliza, TODO en una sola transacción.
  *
  * Si cualquier paso falla, ROLLBACK completo: la BD queda igual que antes.
@@ -597,18 +703,24 @@ async function enviarEvaluacionCompleta(payload) {
         e.code = "SIN_RESPUESTAS"; throw e;
     }
 
-    // 3) Resolvemos la corrección de cada respuesta UNA vez por pregunta
+    // 3) Resolvemos la corrección de cada respuesta. Antes esto era un N+1:
+    //    una query (con 2 subqueries) por alternativa de cada intento → hasta 2N
+    //    queries. Ahora cargamos en BATCH todas las alternativas + explicaciones
+    //    de las preguntas involucradas en 2 queries fijas (mismo patrón IN(...) de
+    //    `cargarPreguntas`) y resolvemos la corrección en memoria. La lógica de
+    //    corrección (correcta/incorrecta/ALT_INVALIDA) es idéntica a antes.
     //    (se hace antes de la transacción para no abrir locks innecesariamente)
     const correctoPorAlt = {};   // alternativa_id → { esCorrecta, correctaId, explicacion }
+    const correccion = await _cargarCorreccionBatch(respuestas.map((r) => r.preguntaId));
     for (const r of respuestas) {
-        const c1 = await _datosCorreccion(r.preguntaId, r.alternativaIntento1Id);
+        const c1 = correccion.resolver(r.preguntaId, r.alternativaIntento1Id);
         if (!c1) {
             const e = new Error(`Alternativa de intento 1 inválida para pregunta ${r.preguntaId}`);
             e.code = "ALT_INVALIDA"; throw e;
         }
         correctoPorAlt[`${r.preguntaId}_1`] = c1;
         if (r.alternativaIntento2Id) {
-            const c2 = await _datosCorreccion(r.preguntaId, r.alternativaIntento2Id);
+            const c2 = correccion.resolver(r.preguntaId, r.alternativaIntento2Id);
             if (!c2) {
                 const e = new Error(`Alternativa de intento 2 inválida para pregunta ${r.preguntaId}`);
                 e.code = "ALT_INVALIDA"; throw e;
@@ -754,6 +866,7 @@ module.exports = {
     obtenerEvaluacion,
     registrarRespuesta,
     finalizarEvaluacion,
+    resolverIdPorUuid,
     obtenerInforme,
     obtenerDetallePorPregunta,
     obtenerInformeCompletoPorPregunta,
