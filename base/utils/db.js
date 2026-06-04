@@ -101,9 +101,16 @@ const initialize = async () => {
 const getPool = (code) => {
     const p = pools[code];
     if (!p) {
-        throw new Error(
-            `DB pool no inicializado para code="${code}". ¿Revisaste env y db.initialize()?`
+        // Servicio no disponible (ISO 25010 — Disponibilidad): el pool no existe
+        // (SQL caído en runtime o nunca inicializado). Lanzamos un error tipado
+        // y con mensaje claro para que las capas superiores lo traduzcan a una
+        // respuesta de "servicio no disponible". El stack NO se filtra al
+        // cliente (ver base/utils/reply.js en producción).
+        const err = new Error(
+            `Base de datos no disponible (code="${code}"). El servicio no puede atender la solicitud en este momento.`
         );
+        err.code = "DB_UNAVAILABLE";
+        throw err;
     }
     return p;
 };

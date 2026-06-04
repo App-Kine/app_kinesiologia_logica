@@ -14,6 +14,7 @@ var mailer = require("../../base/utils/mailer");
 var evalRepo = require("../repositories/evaluacion.repository");
 // Bloque P3.R9: utilidades compartidas
 var { leerArg, RE_CORREO } = require("../../base/utils/argReader");
+var { maskEmail } = require("../../base/utils/seguridad");
 
 const TAG = "\x1b[36m[evaluacion]\x1b[0m";
 const TAG_ERR = "\x1b[31m[evaluacion]\x1b[0m";
@@ -458,19 +459,76 @@ async function enviarInforme(request, response) {
                 reply.error("Esta evaluación es anónima: no hay un correo al cual enviar el informe")
             );
 
+        // Idempotencia (RF-41/42): si el informe ya se despachó antes, NO lo
+        // reenviamos. `obtenerInforme` ya trae `informe_enviado_en`; si tiene
+        // valor respondemos OK marcando que ya estaba enviado, evitando correos
+        // duplicados ante reintentos del cliente.
+        if (info.informe_enviado_en) {
+            logger.log(`${TAG} enviarInforme: ya enviado previamente, no se reenvía correo=${maskEmail(info.correo_estudiante)}`);
+            return response.json(
+                reply.ok({
+                    enviado: true,
+                    yaEnviado: true,
+                    correo: info.correo_estudiante,
+                })
+            );
+        }
+
         const detalle = await evalRepo.obtenerDetallePorPregunta(evaluacionId);
         const { html, text } = _construirInforme(info, detalle);
+
+        // Adjuntar el PDF que generó la app (solo pasa en memoria; no se guarda).
+        // Validamos que sea base64 plausible y acotamos el tamaño (~8MB de
+        // base64). Si no cumple, enviamos el correo SIN adjunto y logueamos, en
+        // vez de tirar un error fatal y perder el informe.
+        const adjuntos = [];
+        if (b.pdfBase64 && typeof b.pdfBase64 === "string") {
+            const pdfLimpio = b.pdfBase64.replace(/[\r\n]/g, "");
+            const RE_BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
+            const MAX_PDF_BASE64 = 8 * 1024 * 1024; // ~8MB de base64
+            if (!RE_BASE64.test(pdfLimpio)) {
+                logger.log(`${TAG_ERR} enviarInforme: pdfBase64 no parece base64 válido, se omite el adjunto`);
+            } else if (pdfLimpio.length > MAX_PDF_BASE64) {
+                logger.log(`${TAG_ERR} enviarInforme: pdfBase64 demasiado grande (${pdfLimpio.length} bytes), se omite el adjunto`);
+            } else {
+                const nombrePdf =
+                    "Auris-informe-" +
+                    String(info.test_nombre || "resultado")
+                        .replace(/[^a-zA-Z0-9-_]+/g, "_")
+                        .slice(0, 60) +
+                    ".pdf";
+                adjuntos.push({
+                    filename: nombrePdf,
+                    content: pdfLimpio,
+                    encoding: "base64",
+                    contentType: "application/pdf",
+                });
+            }
+        }
 
         const r = await mailer.send({
             to: info.correo_estudiante,
             subject: `Auris — Tu informe de resultados: ${info.test_nombre}`,
             html,
             text,
+            attachments: adjuntos,
         });
 
-        await evalRepo.marcarInformeEnviado(evaluacionId);
+        // El correo YA salió. Si el marcado en BD falla (p.ej. timeout SQL), NO
+        // debemos responder fatal: el cliente reintentaría y se enviaría un
+        // correo duplicado. Capturamos ese error puntual, lo logueamos y
+        // respondemos OK igual. Solo un fallo de `mailer.send` (arriba) propaga
+        // error real.
+        try {
+            await evalRepo.marcarInformeEnviado(evaluacionId);
+        } catch (eMarcar) {
+            logger.log(
+                `${TAG_ERR} enviarInforme: correo enviado OK pero falló marcarInformeEnviado: ${eMarcar.message}`,
+                eMarcar
+            );
+        }
 
-        logger.log(`${TAG} enviarInforme: OK correo=${info.correo_estudiante} modo=${r && r.mode}`);
+        logger.log(`${TAG} enviarInforme: OK correo=${maskEmail(info.correo_estudiante)} modo=${r && r.mode}`);
         response.json(
             reply.ok({
                 enviado: true,

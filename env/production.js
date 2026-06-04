@@ -1,9 +1,31 @@
 "use strict";
 
 /**
- * En producción los secretos NUNCA quedan hardcodeados.
- * Lee desde variables de entorno; si faltan, marca la BD como inválida
- * y db.initialize() lanzará un error claro al arranque.
+ * ============================ CONFIGURACIÓN PRODUCCIÓN ============================
+ * En producción los secretos NUNCA quedan hardcodeados: este archivo SOLO lee
+ * de process.env (ver .env.example). Si faltan valores de BD, el pool queda
+ * inválido y db.initialize() corta el arranque con un error claro.
+ *
+ * QUÉ HAY QUE DEFINIR EN EL ENTORNO (env vars) AL DESPLEGAR:
+ *   PORT ......................... puerto del servicio (default 2000, interno).
+ *   DB_HOST / DB_PORT ............ host y puerto de SQL Server.
+ *   DB_USER / DB_PASS ............ credenciales SQL.            ← SECRETO (DB_PASS)
+ *   DB_NAME ...................... base de datos (AurisDB).
+ *   MONGO_URI / MONGO_DB ......... MongoDB de multimedia (GridFS).
+ *   JWT_SECRET ................... ← SECRETO. DEBE coincidir EXACTAMENTE con el
+ *                                  del Controlador (auth.service firma y jwtAuth
+ *                                  verifica con este mismo valor) o la
+ *                                  autenticación entre capas falla.
+ *   MAIL_MODE .................... "smtp" para enviar de verdad; otro valor = solo loguea.
+ *   SMTP_HOST/PORT/SECURE/USER ... servidor de correo saliente.
+ *   SMTP_PASS .................... ← SECRETO (App Password de Gmail u otro).
+ *   MAIL_FROM .................... remitente de los correos.
+ *   FRONTEND_BASE_URL ........... URL del Panel (links de invitación).
+ *   CORS_ORIGINS ................ orígenes permitidos (subida directa de multimedia).
+ *
+ * Los marcados como ← SECRETO se inyectan por variable de entorno / gestor de
+ * secretos; nunca se escriben en archivos versionados.
+ * ================================================================================
  */
 module.exports = {
     app: {

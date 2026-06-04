@@ -1,11 +1,43 @@
 "use strict";
 
+/* =============================================================================
+ *  Auris · Capa Lógica — ARRANQUE DEL SERVICIO  (index.js)
+ * -----------------------------------------------------------------------------
+ *  Punto de entrada del backend de datos. Levanta Express en el puerto
+ *  configurado (2000 por defecto) bajo la ruta base /base_logica.
+ *
+ *  ORDEN DE ARRANQUE (ver initApp(), más abajo):
+ *    1. setRequestContext()  → correlación de requests (X-Request-Id).
+ *    2. métricas Prometheus + parsers de body (urlencoded/json) + CORS allowlist.
+ *    3. setConfig()    → carga env/local|development|production.js en global.config.
+ *    4. setDatabases() → abre el/los pool(s) de SQL Server (con reintentos).
+ *    5. setMongo()     → abre MongoDB/GridFS (OPCIONAL).
+ *    6. setRouters()   → monta routers base + proyecto + health.
+ *    7. setErrorHandlers() → error-handler de Express (SIEMPRE al final).
+ *    8. launchApp()    → app.listen().
+ *
+ *  QUÉ PASA SI FALLA UNA DEPENDENCIA AL ARRANCAR:
+ *    · SQL Server: es OBLIGATORIO. setDatabases() reintenta con backoff; si aun
+ *      así no conecta, lanza y el proceso NO levanta (no se llega a launchApp).
+ *      En producción, si faltan las env vars de BD, el pool queda inválido y
+ *      db.initialize() corta el arranque con un error claro.
+ *    · MongoDB: es OPCIONAL (solo multimedia). Si falla, se LOGUEA y la app
+ *      igual arranca; solo se deshabilitan los endpoints de multimedia.
+ *
+ *  La configuración de cada conexión está en env/*.js (SQL en `databases`,
+ *  Mongo en `mongo`). Esta capa NO debe exponerse a internet: en producción
+ *  solo la alcanza el Controlador dentro de la red interna.
+ * ============================================================================= */
+
 var express = require("express");
+var multer = require("multer");
 var methodOverride = require("method-override");
 var crypto = require("crypto");
 
 var requestContext = require("./base/utils/requestContext");
 var metrics = require("./base/utils/metrics");
+var reply = require("./base/utils/reply");
+var errorTracker = require("./base/utils/errorTracker");
 global.logger = require("./base/utils/logConsola");
 
 var loadConfig = require("./base/utils/loadConfig");
@@ -35,10 +67,11 @@ let setRequestLargeEntity = () => {
         express.urlencoded(
             largeEntity
                 ? { extended: false, limit: "500mb" }
-                : { extended: false }
+                : { extended: false, limit: "5mb" }
         )
     );
-    app.use(express.json(largeEntity ? { limit: "500mb" } : {}));
+    // 5mb por defecto para admitir el PDF del informe (base64) en enviarInforme.
+    app.use(express.json(largeEntity ? { limit: "500mb" } : { limit: "5mb" }));
     app.use(methodOverride());
     logger.log(
         `\x1b[36m[${infoApp.name}]\x1b[0m Request entity: ${
@@ -56,8 +89,10 @@ const CORS_DEV_ORIGINS = [
     "http://localhost:4200",
     "http://localhost:4201",
     "http://localhost:8100",
-    "capacitor://localhost",
+    "capacitor://localhost", // app nativa Capacitor — iOS
     "ionic://localhost",
+    "http://localhost", // app nativa Android (androidScheme: 'http') — multimedia/audio
+    "https://localhost", // app nativa Android (androidScheme: 'https')
 ];
 let corsOrigenesPermitidos = () => {
     const fromEnv = (process.env.CORS_ORIGINS || "")
@@ -179,6 +214,64 @@ let setRouters = (module) => {
     }
 };
 
+// Error-handler de Express (Bloque P2.R6 — auditoría ISO 25010). Se monta
+// DESPUÉS de todos los routers. Dos capas:
+//   1) errorTracker.expressErrorHandler(): captura la excepción (Sentry/logs)
+//      y reenvía con next(err) sin responder.
+//   2) Handler final (err,req,res,next): responde SIEMPRE con `reply` para no
+//      filtrar el stack (reply ya lo omite en producción) y elige el status
+//      adecuado: 413 para payload/archivo demasiado grande, 400 para JSON
+//      malformado del body-parser, 503 para BD no disponible, 500 genérico.
+let setErrorHandlers = () => {
+    try {
+        // Capa 1: tracking (no responde, solo captura y propaga).
+        app.use(errorTracker.expressErrorHandler());
+
+        // Capa 2: respuesta final al cliente.
+        // eslint-disable-next-line no-unused-vars
+        app.use(function (err, req, res, next) {
+            // Si ya se empezó a responder (p.ej. streaming), delegamos a Express.
+            if (res.headersSent) {
+                return next(err);
+            }
+
+            // MulterError: archivo demasiado grande u otros límites de subida.
+            if (err instanceof multer.MulterError) {
+                if (err.code === "LIMIT_FILE_SIZE") {
+                    return res.status(413).json(reply.error("Archivo demasiado grande"));
+                }
+                return res.status(400).json(reply.error(`Error al subir el archivo: ${err.message}`));
+            }
+
+            // body-parser: payload demasiado grande.
+            if (err.type === "entity.too.large" || err.status === 413 || err.statusCode === 413) {
+                return res.status(413).json(reply.error("La solicitud es demasiado grande"));
+            }
+
+            // body-parser: JSON malformado en el body.
+            if (err.type === "entity.parse.failed" || (err.status === 400 && err.expose)) {
+                return res.status(400).json(reply.error("Cuerpo de la solicitud con formato inválido"));
+            }
+
+            // BD no disponible (db.getPool con pool caído).
+            if (err.code === "DB_UNAVAILABLE") {
+                return res.status(503).json(reply.error("Servicio no disponible: la base de datos no responde en este momento"));
+            }
+
+            // Error genérico: el stack NO se filtra (reply lo omite en prod).
+            logger.log(
+                `\x1b[31m[${infoApp.name}]\x1b[0m Error no controlado: ${err && err.message ? err.message : err}`,
+                err
+            );
+            return res.status(500).json(reply.fatal(err instanceof Error ? err : new Error(String(err))));
+        });
+
+        logger.log(`\x1b[36m[${infoApp.name}]\x1b[0m Error handlers: listo`);
+    } catch (e) {
+        throw { msgs: "Error montar error-handlers", error: e };
+    }
+};
+
 let httpServer = null;
 
 let launchApp = () => {
@@ -229,6 +322,7 @@ let initApp = async () => {
         await setMongo();
         setRouters("base");
         setRouters("proyecto");
+        setErrorHandlers(); // DESPUÉS de los routers
         launchApp();
     } catch (e) {
         logger.log(

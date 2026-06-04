@@ -10,6 +10,7 @@ const crypto = require("crypto");
 
 const reply = require("../../base/utils/reply");
 const mailer = require("../../base/utils/mailer");
+const { maskEmail } = require("../../base/utils/seguridad");
 const invRepo = require("../repositories/invitacion.repository");
 const usuarioRepo = require("../repositories/usuario.repository");
 
@@ -126,7 +127,7 @@ async function crear(request, response) {
             modo = (envio && envio.mode) || "dev";
             correoEnviado = !!(envio && envio.delivered); // true solo en SMTP real
         } catch (mailErr) {
-            logger.log(`\x1b[31m[invitacion]\x1b[0m correo NO enviado a ${correo}: ${mailErr.message}`);
+            logger.log(`\x1b[31m[invitacion]\x1b[0m correo NO enviado a ${maskEmail(correo)}: ${mailErr.message}`);
             correoEnviado = false;
             modo = "smtp";
         }
@@ -246,7 +247,7 @@ async function completar(request, response) {
         // bcrypt (RNF-11)
         const rounds =
             (global.config.security && global.config.security.bcryptRounds) || 12;
-        const passwordHash = bcrypt.hashSync(password, rounds);
+        const passwordHash = await bcrypt.hash(password, rounds);
 
         // Crear usuario + asignar rol PROFESOR
         const usuarioId = await usuarioRepo.crearUsuarioProfesor(

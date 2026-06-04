@@ -34,12 +34,18 @@ function _getTransporter(smtp) {
             user: smtp.user,
             pass: smtp.password,
         },
+        // Timeouts (ISO 25010 — Disponibilidad): un SMTP que no responde no
+        // debe colgar la request indefinidamente. Si se vencen, sendMail
+        // rechaza y el llamador responde un error claro.
+        connectionTimeout: 10000,
+        greetingTimeout: 10000,
+        socketTimeout: 20000,
     });
     _transporterKey = key;
     return _transporter;
 }
 
-async function send({ to, subject, html, text, devLink }) {
+async function send({ to, subject, html, text, devLink, attachments }) {
     const mailCfg = (global.config && global.config.mail) || { mode: "dev" };
     const stamp = new Date().toISOString();
 
@@ -49,6 +55,9 @@ async function send({ to, subject, html, text, devLink }) {
         logger.log(`\x1b[33m========== [MAIL · DEV MODE] ${stamp} ==========\x1b[0m`);
         logger.log(`  Para:     ${to}`);
         logger.log(`  Asunto:   ${subject}`);
+        if (Array.isArray(attachments) && attachments.length) {
+            logger.log(`  Adjuntos: ${attachments.map((a) => a.filename).join(", ")}`);
+        }
         if (devLink) logger.log(`  Link:     \x1b[36m${devLink}\x1b[0m`);
         if (text) {
             logger.log("  --- texto ---");
@@ -72,7 +81,10 @@ async function send({ to, subject, html, text, devLink }) {
     const from = mailCfg.from || smtp.user;
 
     try {
-        const info = await transporter.sendMail({ from, to, subject, text, html });
+        const info = await transporter.sendMail({
+            from, to, subject, text, html,
+            ...(Array.isArray(attachments) && attachments.length ? { attachments } : {}),
+        });
         logger.log(`\x1b[32m[MAIL · SMTP]\x1b[0m enviado a ${to} (id=${info.messageId})`);
         return { delivered: true, mode: "smtp", messageId: info.messageId };
     } catch (e) {
