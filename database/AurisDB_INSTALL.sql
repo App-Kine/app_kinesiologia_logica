@@ -127,6 +127,27 @@ IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_li_correo_fecha' AND o
     CREATE INDEX IX_li_correo_fecha ON auris.login_intento(correo, ocurrido_en DESC);
 GO
 
+-- Tokens de reseteo de contraseña ("olvidé mi contraseña"). Tokens de un solo
+-- uso (hash sha256) con expiración corta. Los usa solicitarReset / resetearPassword,
+-- y cambiarPassword invalida los resets pendientes del usuario.
+IF OBJECT_ID(N'auris.password_reset', N'U') IS NULL
+CREATE TABLE auris.password_reset (
+    reset_id            BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+    usuario_id          BIGINT          NOT NULL,
+    token_hash          CHAR(64)        NOT NULL,
+    expira_en           DATETIME2(3)    NOT NULL,
+    usado_en            DATETIME2(3)    NULL,
+    creado_en           DATETIME2(3)    NOT NULL CONSTRAINT DF_pwreset_created DEFAULT (SYSUTCDATETIME()),
+    CONSTRAINT FK_pwreset_usuario FOREIGN KEY (usuario_id) REFERENCES auris.usuario(usuario_id) ON DELETE CASCADE
+);
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_pwreset_token' AND object_id = OBJECT_ID('auris.password_reset'))
+    CREATE INDEX IX_pwreset_token ON auris.password_reset(token_hash);
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_pwreset_usuario' AND object_id = OBJECT_ID('auris.password_reset'))
+    CREATE INDEX IX_pwreset_usuario ON auris.password_reset(usuario_id, usado_en);
+GO
+
 IF OBJECT_ID(N'auris.invitacion_profesor', N'U') IS NULL
 CREATE TABLE auris.invitacion_profesor (
     invitacion_id        UNIQUEIDENTIFIER NOT NULL PRIMARY KEY
