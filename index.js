@@ -89,8 +89,10 @@ const CORS_DEV_ORIGINS = [
     "http://localhost:4200",
     "http://localhost:4201",
     "http://localhost:8100",
-    "capacitor://localhost",
+    "capacitor://localhost", // app nativa Capacitor — iOS
     "ionic://localhost",
+    "http://localhost", // app nativa Android (androidScheme: 'http') — multimedia/audio
+    "https://localhost", // app nativa Android (androidScheme: 'https')
 ];
 let corsOrigenesPermitidos = () => {
     const fromEnv = (process.env.CORS_ORIGINS || "")
