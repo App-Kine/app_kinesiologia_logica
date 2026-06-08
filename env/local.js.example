@@ -1,0 +1,78 @@
+"use strict";
+
+/**
+ * Plantilla para crear tu propio env/local.js
+ *
+ * INSTRUCCIONES:
+ *   1. Copia este archivo a env/local.js   (cp env/local.js.example env/local.js)
+ *   2. Edita las credenciales según tu entorno local
+ *   3. NO lo subas al repo — ya está en .gitignore
+ *
+ * Lo que pongas aquí sobreescribe lo que esté en env/development.js
+ * cuando arrancas con `npm run start` o `npm run dev-unix`.
+ */
+module.exports = {
+    localDatabases: [
+        {
+            code: "auris",
+            server: "localhost",
+            port: 1433,
+            user: "sa",
+            password: "TU_PASSWORD_DE_SQLSERVER_AQUI",   // <-- cambia esto
+            database: "AurisDB",
+            options: {
+                encrypt: true,
+                trustServerCertificate: true,
+            },
+            pool: { max: 10, min: 0, idleTimeoutMillis: 30000 },
+        },
+    ],
+    security: {
+        jwtSecret: "AURIS_LOCAL_DEV_SECRET_CHANGE_ME",   // debe coincidir con el del controlador
+        jwtAccessExpiresIn: "8h",
+        jwtRefreshExpiresIn: "7d",
+        bcryptRounds: 12,
+        loginBlockMaxAttempts: 5,
+        loginBlockWindowMinutes: 15,
+    },
+    mail: {
+        mode: "dev",                                     // "dev" | "smtp"
+        from: "Auris <no-reply@auris.local>",
+        // Para enviar correos REALES pon mode:"smtp" y completa el bloque smtp.
+        // Ejemplo con Gmail (requiere "Contraseña de aplicación", no la clave normal):
+        //   mode: "smtp",
+        //   from: "AURIS <tu.cuenta@gmail.com>",
+        //   smtp: {
+        //       host: "smtp.gmail.com",
+        //       port: 465,
+        //       secure: true,                            // 465=SSL; usa false + port 587 para STARTTLS
+        //       user: "tu.cuenta@gmail.com",
+        //       password: "xxxxxxxxxxxxxxxx",            // App Password de 16 caracteres
+        //   },
+    },
+    frontend: {
+        // Puerto de la app Auris unificada (su `npm start` usa 4201). Se usa para
+        // armar los enlaces de los correos (invitación de profesor / recuperar
+        // contraseña). Si cambias el puerto del frontend, actualízalo aquí.
+        baseUrl: "http://localhost:4201",
+    },
+    // Orígenes CORS permitidos para la subida directa de multimedia a la lógica.
+    // Vacío en desarrollo => se permiten los localhost del panel/app y Capacitor.
+    // En producción define CORS_ORIGINS (lista separada por comas).
+    corsOrigins: [],
+    invitaciones: {
+        expiraHoras: 24,
+    },
+    // P2.R6 — Tracking de errores en producción (opcional).
+    // Si dejas `dsn` vacío, el tracker queda desactivado y los errores van
+    // solo a logs locales. Para activarlo:
+    //   1. npm install @sentry/node
+    //   2. Crear una cuenta en https://sentry.io y obtener el DSN del proyecto.
+    //   3. Pegarlo aquí y reiniciar la lógica.
+    errorTracking: {
+        dsn: "",                              // ej. "https://xxxx@oXXXX.ingest.sentry.io/YYYY"
+        environment: "development",           // "development" | "staging" | "production"
+        tracesSampleRate: 0.0,                // 0..1 (% de transacciones tracked)
+        release: "auris@1.0.5",
+    },
+};

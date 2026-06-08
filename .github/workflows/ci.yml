@@ -1,0 +1,25 @@
+name: CI
+
+# Gate de calidad de la lógica: corre en cada push y PR. Verifica sintaxis y la
+# batería de tests de servicios (28 tests: validaciones, autorización, etc).
+on:
+  push:
+    branches: [main, Final-details]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Instalar dependencias
+        run: npm ci
+      - name: Verificar sintaxis (node --check)
+        run: |
+          find . -path ./node_modules -prune -o -name '*.js' -print | xargs -n1 node --check
+      - name: Tests (jest)
+        run: npm test
