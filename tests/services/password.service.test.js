@@ -47,19 +47,18 @@ describe("password.service.solicitar — anti-enumeración", () => {
         expect(pwRepo.buscarUsuarioActivoPorCorreo).not.toHaveBeenCalled();
     });
 
-    test("correo NO registrado → responde OK neutro y NO envía correo", async () => {
+    test("correo NO registrado → RECHAZA con error y NO envía correo", async () => {
         pwRepo.buscarUsuarioActivoPorCorreo.mockResolvedValue(null);
         const req = mockRequest({ correo: "fantasma@uv.cl" });
         const res = mockResponse();
         await pwService.solicitar(req, res);
 
-        expect(res.jsonBody.error).toBeUndefined();
-        expect(res.jsonBody.data.mensaje).toMatch(/Si el correo corresponde/);
-        expect(res.jsonBody.data.devLink).toBeNull();
+        expect(res.jsonBody.status).toBe("ERROR");
+        expect(res.jsonBody.error.message).toMatch(/No existe una cuenta/i);
         expect(mailer.send).not.toHaveBeenCalled();
     });
 
-    test("correo registrado → MISMO mensaje neutro (no revela existencia)", async () => {
+    test("correo registrado → OK y envía el correo de reseteo", async () => {
         pwRepo.buscarUsuarioActivoPorCorreo.mockResolvedValue({
             usuario_id: 7,
             nombre: "Ana",
@@ -69,7 +68,7 @@ describe("password.service.solicitar — anti-enumeración", () => {
         await pwService.solicitar(req, res);
 
         expect(res.jsonBody.error).toBeUndefined();
-        expect(res.jsonBody.data.mensaje).toMatch(/Si el correo corresponde/);
+        expect(res.jsonBody.data.mensaje).toMatch(/enlace para restablecer/i);
         expect(mailer.send).toHaveBeenCalledTimes(1);
     });
 

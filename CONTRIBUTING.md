@@ -1,7 +1,7 @@
 # Convenciones de código — Auris
 
 Esta guía recoge las decisiones de estructura y estilo seguidas en los
-cuatro repositorios de Auris. Sigue estas convenciones cuando agregues
+tres repositorios de Auris. Sigue estas convenciones cuando agregues
 código para que el proyecto siga creciendo de forma uniforme y previsible.
 
 ## Estructura por capa

@@ -4,6 +4,13 @@ Backend con la lógica de negocio del MVP de **Auris** — plataforma de auscult
 
 Es la capa que toca SQL Server y MongoDB. Recibe requests del **Controlador** (puerto 3023), nunca expone su puerto público fuera de la red interna en producción.
 
+> **📦 Repositorios del proyecto Auris** — el código definitivo está en la rama **`unification`** de cada repo:
+> - **App (estudiante + panel)**: https://github.com/App-Kine/app_kinesiologia_frontend
+> - **Lógica** (negocio + datos + BD + correo) — este repo: https://github.com/App-Kine/app_kinesiologia_logica
+> - **Controlador** (gateway / API): https://github.com/App-Kine/app_kinesiologia_controlador
+>
+> **Base de datos (para la revisión):** este repo incluye todo lo necesario en [`database/`](./database) — instalación ([`AurisDB_INSTALL.sql`](./database/AurisDB_INSTALL.sql)), guía paso a paso ([`SETUP.md`](./database/SETUP.md)) y respaldo/restauración ([`BACKUP.md`](./database/BACKUP.md)).
+
 ---
 
 ## 📋 Información para la revisión técnica (DTIC / Ciberseguridad)
@@ -21,7 +28,7 @@ Esta capa es el **backend de datos**: la única que toca SQL Server y MongoDB. P
 | Conexión a la base de datos | `database/SETUP.md` + "Conexión a la base de datos" (abajo) |
 | Endpoints / servicios | "📚 Endpoints / servicios" |
 | Tests / validación | "🧪 Tests y validación" (183 tests Jest) |
-| Setup completo (4 repos) | [`SETUP_COMPLETO.md`](./SETUP_COMPLETO.md) |
+| Setup completo (3 repos) | [`SETUP_COMPLETO.md`](./SETUP_COMPLETO.md) |
 | Seguridad / handoff producción | [`SEGURIDAD_PRODUCCION.md`](./SEGURIDAD_PRODUCCION.md) |
 
 ### Tecnologías y versiones
@@ -78,7 +85,7 @@ Respaldos y restauración: **[`database/BACKUP.md`](database/BACKUP.md)**.
 
 ### Credenciales de prueba
 
-Tras instalar con `AurisDB_INSTALL.sql`, el login (a través del Panel → Controlador) acepta estas cuentas de demo:
+Tras instalar con `AurisDB_INSTALL.sql`, el login (desde el **panel docente** de la app → Controlador) acepta estas cuentas de demo:
 
 | Correo | Contraseña | Rol |
 |---|---|---|
@@ -92,21 +99,19 @@ Tras instalar con `AurisDB_INSTALL.sql`, el login (a través del Panel → Contr
 
 ## 🧭 ¿Dónde encaja esto?
 
-Auris está partido en **4 repos**:
+Auris está partido en **3 repos**:
 
 ```
-┌──────────────────────┐    ┌──────────────────────┐
-│  app_kinesiologia    │    │  app_kinesiologia    │
-│  _panel              │    │  _frontend           │
-│  (Panel docente WEB) │    │  (App estudiante     │
-│  Angular + Ionic     │    │   móvil iOS/Android) │
-│  :4200               │    │  Ionic + Capacitor   │
-└──────────┬───────────┘    └──────────┬───────────┘
-           │                           │
-           │  HTTP + JWT               │  HTTP (público,
-           │  (login docente)          │   sin login)
-           └─────────────┬─────────────┘
-                         │
+              ┌─────────────────────────────────┐
+              │  app_kinesiologia_frontend      │
+              │  APP UNIFICADA (web + móvil)    │
+              │  Estudiante (público, sin login)│
+              │  + Panel docente (login JWT)    │
+              │  Ionic + Angular + Capacitor    │
+              │  :4201                          │
+              └────────────────┬────────────────┘
+                               │  HTTP (público) + JWT (panel)
+                               │
               ┌──────────▼──────────┐
               │  app_kinesiologia   │
               │  _controlador       │
@@ -195,7 +200,7 @@ app_kinesiologia_logica/
 ├── tests/                      # 183 tests Jest (services, repositories, utils)
 ├── .env.example                # plantilla de variables para producción
 ├── CONFIG_REFERENCE.md         # referencia exhaustiva de toda la config
-├── SETUP_COMPLETO.md           # guía de los 4 repos en una máquina nueva
+├── SETUP_COMPLETO.md           # guía de los 3 repos en una máquina nueva
 ├── SEGURIDAD_PRODUCCION.md     # checklist de handoff para DTIC / Ciberseguridad
 ├── config.js, index.js, routes.js
 └── package.json
@@ -223,10 +228,10 @@ duplicar). Detalle paso a paso: [`database/SETUP.md`](./database/SETUP.md).
 
 ### 3. Inicializar buckets de Mongo
 
-El script usa la conexión de `env/local.js` (o las variables `MONGO_URI` / `MONGO_DB`):
+El script es de **`mongosh`** (viene con MongoDB), no de Node. Pásale tu URI + `/auris_media`:
 
 ```bash
-node database/mongodb/init_mongo.js
+mongosh "mongodb://localhost:27017/auris_media" database/mongodb/init_mongo.js
 ```
 
 > Detalle en [`database/mongodb/SETUP_MONGO.md`](./database/mongodb/SETUP_MONGO.md). Mongo es **opcional**: si no está disponible, la lógica igual arranca y solo se deshabilitan los endpoints de multimedia.

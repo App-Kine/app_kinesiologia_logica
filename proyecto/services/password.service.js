@@ -4,10 +4,13 @@
  * Service de recuperación de contraseña (RF-59).
  *
  * Flujo:
- *  1) solicitar: el usuario pide reseteo con su correo. Si existe y está activo,
- *     se genera un token de un solo uso, se guarda su hash y se envía un enlace
- *     por correo (mailer en modo dev = solo loguea). Por seguridad SIEMPRE
- *     responde OK (no revela si el correo existe — anti-enumeración).
+ *  1) solicitar: el usuario pide reseteo con su correo. Se CORROBORA que exista
+ *     una cuenta activa con ese correo; si NO existe, se rechaza la solicitud
+ *     (pedido del cliente). Si existe, se genera un token de un solo uso, se
+ *     guarda su hash y se envía un enlace por correo (mailer en modo dev = solo
+ *     loguea / devuelve devLink).
+ *     NOTA: rechazar correos inexistentes revela cuáles están registrados
+ *     (enumeración); es un trade-off de UX aceptado explícitamente.
  *  2) resetear: con el token + nueva contraseña (política RNF-13), se valida el
  *     token (vigente y no usado), se hashea con bcrypt (RNF-11) y se actualiza.
  */
@@ -67,41 +70,48 @@ async function solicitar(request, response) {
 
         const usuario = await pwRepo.buscarUsuarioActivoPorCorreo(correo);
 
-        // Respuesta neutra siempre (no revelar si existe). Si existe, generamos.
-        let devLink = null;
-        if (usuario) {
-            await pwRepo.invalidarResetsPrevios(usuario.usuario_id);
-
-            const tokenPlano = crypto.randomBytes(48).toString("hex");
-            const tokenHash = _sha256Hex(tokenPlano);
-            const expiraEn = new Date();
-            expiraEn.setMinutes(expiraEn.getMinutes() + RESET_TTL_MIN);
-
-            await pwRepo.crearReset(usuario.usuario_id, tokenHash, expiraEn);
-
-            const frontBase =
-                (global.config.frontend && global.config.frontend.baseUrl) ||
-                "http://localhost:4200";
-            const link = `${frontBase}/restablecer-password/${tokenPlano}`;
-
-            const r = await mailer.send({
-                to: correo,
-                subject: "Auris — recuperación de contraseña",
-                text: `Hola ${usuario.nombre || ""},\n\nRecibimos una solicitud para restablecer tu contraseña.\nAbre el siguiente enlace (válido por ${RESET_TTL_MIN} minutos):\n\n${link}\n\nSi no fuiste tú, ignora este correo.\n\n— Equipo Auris`,
-                html: `<p>Hola ${escapeHtml(usuario.nombre || "")},</p><p>Recibimos una solicitud para restablecer tu contraseña.</p><p><a href="${link}">Restablecer mi contraseña</a></p><p>El enlace vence en ${RESET_TTL_MIN} minutos. Si no fuiste tú, ignora este correo.</p>`,
-                devLink: link,
-            });
-            devLink = r && r.devLink ? r.devLink : null;
-            logger.log(`${TAG} solicitar: token emitido para usuario_id=${usuario.usuario_id}`);
-        } else {
-            logger.log(`${TAG} solicitar: correo no registrado (respuesta neutra)`);
+        // Pedido del cliente: CORROBORAR que el correo exista en la BD. Si no hay
+        // una cuenta activa con ese correo, se RECHAZA la solicitud y no se envía
+        // nada (el frontend muestra el error y no deja continuar).
+        // NOTA DE SEGURIDAD: esto revela si un correo está registrado
+        // (enumeración de cuentas), a diferencia de la respuesta neutra anterior.
+        // Es un trade-off de usabilidad pedido explícitamente.
+        if (!usuario) {
+            logger.log(`${TAG} solicitar: correo no registrado → rechazado`);
+            return response.json(
+                reply.error("No existe una cuenta activa con ese correo.")
+            );
         }
+
+        await pwRepo.invalidarResetsPrevios(usuario.usuario_id);
+
+        const tokenPlano = crypto.randomBytes(48).toString("hex");
+        const tokenHash = _sha256Hex(tokenPlano);
+        const expiraEn = new Date();
+        expiraEn.setMinutes(expiraEn.getMinutes() + RESET_TTL_MIN);
+
+        await pwRepo.crearReset(usuario.usuario_id, tokenHash, expiraEn);
+
+        const frontBase =
+            (global.config.frontend && global.config.frontend.baseUrl) ||
+            "http://localhost:4200";
+        const link = `${frontBase}/restablecer-password/${tokenPlano}`;
+
+        const r = await mailer.send({
+            to: correo,
+            subject: "Auris — recuperación de contraseña",
+            text: `Hola ${usuario.nombre || ""},\n\nRecibimos una solicitud para restablecer tu contraseña.\nAbre el siguiente enlace (válido por ${RESET_TTL_MIN} minutos):\n\n${link}\n\nSi no fuiste tú, ignora este correo.\n\n— Equipo Auris`,
+            html: `<p>Hola ${escapeHtml(usuario.nombre || "")},</p><p>Recibimos una solicitud para restablecer tu contraseña.</p><p><a href="${link}">Restablecer mi contraseña</a></p><p>El enlace vence en ${RESET_TTL_MIN} minutos. Si no fuiste tú, ignora este correo.</p>`,
+            devLink: link,
+        });
+        const devLink = r && r.devLink ? r.devLink : null;
+        logger.log(`${TAG} solicitar: token emitido para usuario_id=${usuario.usuario_id}`);
 
         response.json(
             reply.ok({
                 mensaje:
-                    "Si el correo corresponde a una cuenta, te enviamos un enlace para restablecer la contraseña.",
-                devLink: devLink, // solo presente en modo dev y si el correo existe
+                    "Te enviamos un enlace para restablecer tu contraseña. Revisa tu correo.",
+                devLink: devLink, // solo presente en modo dev
             })
         );
     } catch (e) {

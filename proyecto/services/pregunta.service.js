@@ -421,7 +421,13 @@ async function quitarDeTest(request, response) {
 
 function _csvEscape(s) {
     if (s == null) return "";
-    const str = String(s);
+    let str = String(s);
+    // Anti CSV/formula injection: si el valor empieza por = + - @ (o tab/CR),
+    // se antepone una comilla simple para que Excel/Sheets NO lo ejecute como
+    // fórmula al abrir el archivo.
+    if (/^[=+\-@\t\r]/.test(str)) {
+        str = "'" + str;
+    }
     if (/[",\n\r]/.test(str)) {
         return '"' + str.replace(/"/g, '""') + '"';
     }
@@ -431,7 +437,16 @@ function _csvEscape(s) {
 async function exportarBanco(request, response) {
     const b = _leerArg(request);
     const profesorId = b.profesorId ? Number(b.profesorId) : null;
-    logger.log(`${TAG} exportarBanco: profesorId=${profesorId || 'todos'}`);
+    // Endurecimiento (defensa en profundidad): EXIGIR profesorId. La identidad la
+    // inyecta el gateway desde el JWT; si falta, NO se exporta nada. Antes un id
+    // ausente exportaba TODO el banco de todos los profesores (con respuestas
+    // correctas y correos de los creadores).
+    if (!Number.isInteger(profesorId) || profesorId <= 0) {
+        return response.json(
+            reply.error("Falta el identificador del profesor.")
+        );
+    }
+    logger.log(`${TAG} exportarBanco: profesorId=${profesorId}`);
     try {
         const data = await preguntaRepo.exportarBanco(profesorId);
         const cols = [

@@ -13,6 +13,36 @@ instancia de SQL Server / MongoDB que ya tengas (o una instalación nativa).
 
 ---
 
+## 0. Clonar los repositorios
+
+Auris son **3 repos** (el código definitivo está en la rama **`unification`**). Clónalos en **una misma carpeta** (carpetas hermanas):
+
+```bash
+git clone -b unification https://github.com/App-Kine/app_kinesiologia_logica.git
+git clone -b unification https://github.com/App-Kine/app_kinesiologia_controlador.git
+git clone -b unification https://github.com/App-Kine/app_kinesiologia_frontend.git
+```
+
+```
+mi-carpeta/
+├── app_kinesiologia_logica/        # backend: BD + negocio + multimedia + correo  (ESTE repo)
+├── app_kinesiologia_controlador/   # gateway / API           (:3023)
+└── app_kinesiologia_frontend/      # app unificada estudiante + panel docente  (:4201)
+```
+
+### 📋 Resumen — qué archivos CREAR y qué CAMBIAR
+| Dónde | Acción | Detalle |
+|---|---|---|
+| `app_kinesiologia_logica/env/local.js` | **CREAR** `cp env/local.js.example env/local.js` | **Cambiar la `password` de SQL Server** (obligatorio). Opcional: `jwtSecret`, bloque `smtp` para enviar correos reales. |
+| `app_kinesiologia_controlador/env/local.js` | **CREAR** `cp env/local.js.example env/local.js` | El `jwtSecret` **debe ser idéntico** al de la lógica. Con los defaults ya coinciden → no hay que tocar nada. |
+| **SQL Server** | **EJECUTAR** `AurisDB_INSTALL.sql` | Crea la BD `AurisDB` + esquema + datos de demo (paso 1). |
+| **MongoDB** | **EJECUTAR** `mongosh ".../auris_media" database/mongodb/init_mongo.js` | Crea los buckets de multimedia (paso 2). |
+| `app_kinesiologia_frontend` *(solo si pruebas en un celular físico)* | **CAMBIAR** host | `npm run ios` / `npm run android` ponen la IP del Mac **solos**; en web/simulador queda `localhost`. |
+
+> En resumen: lo **único obligatorio** de editar a mano es la **password de SQL Server** en `app_kinesiologia_logica/env/local.js`. Todo lo demás funciona con los valores por defecto en local.
+
+---
+
 ## 1. Crear la base de datos (SQL Server)
 
 Conéctate a tu instancia de SQL Server y ejecuta el script canónico
@@ -35,14 +65,15 @@ Al final verás el listado de tablas/vistas y los conteos de filas.
 
 ## 2. Inicializar MongoDB (multimedia)
 
-Crea los buckets GridFS ejecutando el script de inicialización con Node:
+Crea los buckets GridFS ejecutando el script con **`mongosh`** (viene incluido con MongoDB):
 
 ```bash
 cd app_kinesiologia_logica
-node database/mongodb/init_mongo.js
+mongosh "mongodb://localhost:27017/auris_media" database/mongodb/init_mongo.js
 ```
-(usa la conexión de `env/local.js` o las variables `MONGO_URI` / `MONGO_DB`).
-Ver detalle en [`mongodb/SETUP_MONGO.md`](mongodb/SETUP_MONGO.md).
+(si usas Atlas u otra instancia, reemplaza la URI manteniendo `/auris_media` al final).
+Crea los buckets `fs_audios`, `fs_imagenes`, `fs_videos` con índices y validadores.
+Es **idempotente**. Ver detalle en [`mongodb/SETUP_MONGO.md`](mongodb/SETUP_MONGO.md).
 
 ---
 
@@ -90,23 +121,21 @@ npm run dev-unix      # Windows: npm run dev
 ```bash
 cd app_kinesiologia_controlador
 npm install
-cp env/local.js.example env/local.js   # los defaults funcionan en local
+cp env/local.js.example env/local.js
+# ⚠️ El jwtSecret de este local.js DEBE ser EXACTAMENTE el mismo que el de la
+#    lógica. Con los defaults ya coinciden; si cambiaste el de la lógica, cámbialo aquí también.
 npm run dev-unix      # Windows: npm run dev
 ```
 
-**Panel web (otra terminal):**
-```bash
-cd app_kinesiologia_panel
-npm install
-npm start             # http://localhost:4200
-```
-
-**App del estudiante (otra terminal):**
+**App Auris — estudiante + panel docente (otra terminal):**
 ```bash
 cd app_kinesiologia_frontend
-npm install
+npm install           # trae .npmrc (legacy-peer-deps), npm install funciona directo
 npm start             # http://localhost:4201
 ```
+> Es **una sola app**: al abrir `http://localhost:4201` aparece una landing →
+> **"Soy estudiante"** (público) o **"Soy profesor"** (login con las credenciales
+> de demo de arriba). El panel docente ya está incluido aquí (no hay repo aparte).
 
 ---
 

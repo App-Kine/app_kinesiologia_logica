@@ -47,7 +47,9 @@ module.exports = {
         from: "Auris <no-reply@auris.local>",
     },
     frontend: {
-        baseUrl: "http://localhost:4200",
+        // Puerto de la app Auris unificada (npm start = 4201). Se usa para armar
+        // los enlaces de los correos (invitación de profesor, recuperar contraseña).
+        baseUrl: "http://localhost:4201",
     },
     invitaciones: {
         expiraHoras: 24,

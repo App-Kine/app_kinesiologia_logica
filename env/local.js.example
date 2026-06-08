@@ -51,9 +51,10 @@ module.exports = {
         //   },
     },
     frontend: {
-        // El puerto donde corre tu frontend (ng serve = 4200 por defecto).
-        // Verifica el puerto real en el output de `npm start` del frontend.
-        baseUrl: "http://localhost:4200",
+        // Puerto de la app Auris unificada (su `npm start` usa 4201). Se usa para
+        // armar los enlaces de los correos (invitación de profesor / recuperar
+        // contraseña). Si cambias el puerto del frontend, actualízalo aquí.
+        baseUrl: "http://localhost:4201",
     },
     // Orígenes CORS permitidos para la subida directa de multimedia a la lógica.
     // Vacío en desarrollo => se permiten los localhost del panel/app y Capacitor.

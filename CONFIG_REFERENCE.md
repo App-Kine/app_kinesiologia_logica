@@ -80,7 +80,7 @@ invitación que viajan por correo.
 
 | Campo | Tipo | Default | Notas |
 |---|---|---|---|
-| `baseUrl` | string | `"http://localhost:4200"` | URL base del panel. Si el panel corre en otro puerto, cambiar. |
+| `baseUrl` | string | `"http://localhost:4201"` | URL base de la app Auris (estudiante + panel). Se usa para los links de invitación y de recuperar contraseña que viajan por correo. Si el frontend corre en otro puerto, cambiar. |
 
 ### `invitaciones`
 
@@ -135,9 +135,11 @@ A dónde reenvía cada llamada el controlador.
 
 ## Variables de los FRONTENDS
 
-Los frontends no usan `env/local.js`. Usan `environment.ts` y `environment.prod.ts`.
+El frontend no usa `env/local.js`. Usa `environment.ts` y `environment.prod.ts`.
 
-### `app_kinesiologia_panel/src/environments/environment.ts`
+### `app_kinesiologia_frontend/src/environments/environment.ts`
+
+(Una sola app unificada estudiante + panel; ya no hay un repo de panel aparte.)
 
 | Campo | Tipo | Default | Notas |
 |---|---|---|---|
@@ -145,9 +147,7 @@ Los frontends no usan `env/local.js`. Usan `environment.ts` y `environment.prod.
 | `BASE_API_URL` | string | `"http://localhost:3023/controlador_base/"` | URL del controlador. En `environment.prod.ts` se reemplaza por el dominio **HTTPS** real. |
 | `LOGICA_API_URL` | string | `"http://localhost:2000/base_logica/"` | Para multimedia GET directo. En prod, dominio HTTPS. |
 
-### `app_kinesiologia_frontend/src/environments/environment.ts`
-
-Igual al panel.
+> Para probar en un **celular físico** no se edita a mano: `npm run ios` / `npm run android` ponen la IP del Mac automáticamente (y `npm start` vuelve a `localhost`).
 
 ## Variables del SETUP de servidor (no en código)
 

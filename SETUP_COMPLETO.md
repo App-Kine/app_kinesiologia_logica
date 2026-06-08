@@ -4,14 +4,13 @@
 
 ## 0. Qué vas a instalar
 
-Auris son **4 repos** que se comunican entre sí:
+Auris son **3 repos** que se comunican entre sí (código definitivo en la rama **`unification`**):
 
 | # | Repo | Qué es | Puerto |
 |---|------|--------|--------|
-| 1 | `app_kinesiologia_logica` | Backend Node (acceso a BD + Mongo) | `2000` |
-| 2 | `app_kinesiologia_controlador` | Backend Node (proxy + JWT + entrada pública) | `3023` |
-| 3 | `app_kinesiologia_panel` | Web Ionic/Angular para docentes y admin | `4200` |
-| 4 | `app_kinesiologia_frontend` | App móvil Ionic/Angular para estudiantes | `4201` |
+| 1 | `app_kinesiologia_logica` | Backend Node (acceso a BD + Mongo + correo) | `2000` |
+| 2 | `app_kinesiologia_controlador` | Backend Node (gateway + JWT + entrada pública) | `3023` |
+| 3 | `app_kinesiologia_frontend` | **App unificada** Ionic/Angular: **estudiante + panel docente** (web y móvil) | `4201` |
 
 Más dos servicios de datos:
 
@@ -21,13 +20,13 @@ Más dos servicios de datos:
 Cómo se hablan:
 
 ```
-[panel :4200]  [frontend :4201]
-       \           /
-        ↓ HTTP    ↓ HTTP
-     [controlador :3023]
-              ↓ HTTP
-         [lógica :2000] ──→ SQL Server :1433
-                       └──→ MongoDB :27017
+        [ app_kinesiologia_frontend :4201 ]
+        (estudiante público + panel docente JWT)
+                       ↓ HTTP
+              [controlador :3023]
+                       ↓ HTTP
+                 [lógica :2000] ──→ SQL Server :1433
+                               └──→ MongoDB :27017
 ```
 
 ---
@@ -62,28 +61,26 @@ Para SQL Server: abre SSMS y conéctate con `localhost` (o `localhost\SQLEXPRESS
 
 ---
 
-## 2. Clonar los 4 repos
+## 2. Clonar los 3 repos
 
-Crea una carpeta `Auris/` y clona dentro:
+Crea una carpeta `Auris/` y clona dentro (rama **`unification`**):
 
 ```powershell
 mkdir Auris
 cd Auris
 
-git clone <URL_logica>       app_kinesiologia_logica
-git clone <URL_controlador>  app_kinesiologia_controlador
-git clone <URL_panel>        app_kinesiologia_panel
-git clone <URL_frontend>     app_kinesiologia_frontend
+git clone -b unification https://github.com/App-Kine/app_kinesiologia_logica.git
+git clone -b unification https://github.com/App-Kine/app_kinesiologia_controlador.git
+git clone -b unification https://github.com/App-Kine/app_kinesiologia_frontend.git
 ```
 
-> Reemplaza `<URL_xxx>` por las URLs reales de los repos. Estructura final:
+Estructura final:
 
 ```
 Auris/
-├── app_kinesiologia_logica/
-├── app_kinesiologia_controlador/
-├── app_kinesiologia_panel/
-└── app_kinesiologia_frontend/
+├── app_kinesiologia_logica/        # backend BD + negocio + multimedia + correo
+├── app_kinesiologia_controlador/   # gateway / API (:3023)
+└── app_kinesiologia_frontend/      # app unificada estudiante + panel (:4201)
 ```
 
 ---
@@ -110,9 +107,9 @@ Instalación completa. Conteos por tabla:
   test               2
   aplicacion_test    2
   ...
-Listo. El sistema está usable:
-  - Panel (http://localhost:4200) → login con cualquier usuario.
-  - App estudiante (http://localhost:4201) → ver 3 cursos, 2 tests.
+Listo. El sistema está usable en la app (http://localhost:4201):
+  - "Soy profesor" → login con cualquier usuario de demo.
+  - "Soy estudiante" → ver 3 cursos, 2 tests (sin login).
 ```
 
 ### Alternativa: línea de comandos
@@ -212,24 +209,23 @@ Si dejas `mode: "dev"`, los correos se imprimen en la consola en lugar de enviar
 
 ---
 
-## 6. `npm install` en los 4 repos
+## 6. `npm install` en los 3 repos
 
 Esto puede tardar varios minutos la primera vez. Desde la carpeta `Auris/`:
 
 ```powershell
 cd app_kinesiologia_logica         ; npm install ; cd ..
 cd app_kinesiologia_controlador    ; npm install ; cd ..
-cd app_kinesiologia_panel          ; npm install ; cd ..
-cd app_kinesiologia_frontend       ; npm install --legacy-peer-deps ; cd ..
+cd app_kinesiologia_frontend       ; npm install ; cd ..
 ```
 
-> El `--legacy-peer-deps` del frontend móvil es porque Capacitor 7 + Cordova legacy tienen un conflicto menor de rxjs.
+> El frontend trae un `.npmrc` con `legacy-peer-deps=true` (Capacitor 7 + Cordova legacy tienen un conflicto menor de rxjs/three), así que `npm install` funciona directo, sin flags.
 
 ---
 
-## 7. Arrancar los 4 servicios
+## 7. Arrancar los 3 servicios
 
-Necesitas **4 terminales**, una por cada repo. **El orden importa**: primero lógica, después controlador, después los frontends.
+Necesitas **3 terminales**, una por cada repo. **El orden importa**: primero lógica, después controlador, después la app.
 
 ### Terminal 1 — Lógica (puerto 2000)
 
@@ -259,31 +255,25 @@ Espera a ver:
 Servidor escuchando en puerto 3023
 ```
 
-### Terminal 3 — Panel web (puerto 4200, para docentes/admin)
-
-```powershell
-cd app_kinesiologia_panel
-npm start
-```
-
-Abre solo cuando veas `✔ Compiled successfully` y `Local: http://localhost:4200`.
-
-### Terminal 4 — App móvil (puerto 4201, para estudiantes)
+### Terminal 3 — App Auris (puerto 4201, estudiante + panel docente)
 
 ```powershell
 cd app_kinesiologia_frontend
 npm start
 ```
 
-Abre cuando veas `Local: http://localhost:4201`.
+Abre cuando veas `Local: http://localhost:4201`. Es **una sola app**: la landing
+te deja entrar como **estudiante** (público) o como **profesor** (login).
 
 ---
 
 ## 8. Probar el sistema
 
+Todo es la misma app: **http://localhost:4201** → la landing te pregunta cómo entrar.
+
 ### Como docente / admin
 
-Entra a **http://localhost:4200** y prueba con cualquiera de estos usuarios:
+En la landing elige **"Soy profesor"** y prueba con cualquiera de estos usuarios:
 
 | Correo | Password | Te lleva a |
 |---|---|---|
@@ -295,7 +285,7 @@ Como docente deberías ver tus cursos asignados, tests, aplicaciones y analític
 
 ### Como estudiante
 
-Entra a **http://localhost:4201** (sin login). Debes ver:
+En la landing elige **"Soy estudiante"** (sin login). Debes ver:
 
 1. Home con 2 botones: **Auscultación 3D** y **Tests**.
 2. **Auscultación** → modelo 3D del torso con hotspots clickeables.
@@ -311,7 +301,7 @@ Entra a **http://localhost:4201** (sin login). Debes ver:
 ### Encender / apagar
 
 - SQL Server y MongoDB se levantan solos al arrancar Windows (corren como servicios). Si quieres apagarlos manualmente: **services.msc** → busca `SQL Server (MSSQLSERVER)` y `MongoDB` → click derecho → Stop.
-- Para los 4 servicios Node: Ctrl+C en cada terminal.
+- Para los 3 servicios Node (lógica, controlador, app): Ctrl+C en cada terminal.
 
 ### Re-aplicar el setup cuando algo falla
 
@@ -336,7 +326,7 @@ En SSMS:
 DROP DATABASE AurisDB;
 ```
 
-Luego repite el paso 3 (aplicar los 2 SQL).
+Luego repite el paso 3 (volver a aplicar `AurisDB_INSTALL.sql`).
 
 ---
 
@@ -354,7 +344,7 @@ Luego repite el paso 3 (aplicar los 2 SQL).
 | `ERESOLVE rxjs` al instalar el frontend móvil | Conflicto Cordova legacy | Agrega `--legacy-peer-deps` |
 | Port 1433 ya en uso | Otra instancia de SQL Server | Apaga la otra o cambia el puerto en `env/local.js` |
 | Port 4200/4201 ya en uso | Otro Angular corriendo | `npm start -- --port 4300` (o el que quieras) |
-| El estudiante no ve cursos | El reseed no corrió | Repite el segundo SQL del paso 3 |
+| El estudiante no ve cursos | Los datos de demo no se aplicaron | Repite el paso 3 (`AurisDB_INSTALL.sql`) |
 | SSMS no se conecta a `localhost` | Servicio SQL Server detenido | services.msc → SQL Server (MSSQLSERVER) → Start |
 | Error `TLS handshake` con SQL Server | Express usa TLS estricto | En `env/local.js` deja `encrypt: true, trustServerCertificate: true` |
 
@@ -380,12 +370,11 @@ Luego repite el paso 3 (aplicar los 2 SQL).
 Una vez que tienes **SQL Server**, **MongoDB**, **Node 20.19.0**, **mongosh** y **SSMS** instalados:
 
 ```powershell
-# 1) Clonar
+# 1) Clonar (rama unification)
 mkdir Auris ; cd Auris
-git clone <URL_logica>       app_kinesiologia_logica
-git clone <URL_controlador>  app_kinesiologia_controlador
-git clone <URL_panel>        app_kinesiologia_panel
-git clone <URL_frontend>     app_kinesiologia_frontend
+git clone -b unification https://github.com/App-Kine/app_kinesiologia_logica.git
+git clone -b unification https://github.com/App-Kine/app_kinesiologia_controlador.git
+git clone -b unification https://github.com/App-Kine/app_kinesiologia_frontend.git
 
 # 2) BD: abrir en SSMS y darle F5 a:
 #    app_kinesiologia_logica\database\AurisDB_INSTALL.sql
@@ -397,20 +386,19 @@ mongosh "mongodb://localhost:27017/auris_media" database\mongodb\init_mongo.js
 # 4) Config
 copy env\local.js.example env\local.js
 # editar env\local.js y poner tu password de SQL Server
+cd ..
+cd app_kinesiologia_controlador ; copy env\local.js.example env\local.js ; cd ..
 
 # 5) Instalar dependencias
-npm install ; cd ..
+cd app_kinesiologia_logica         ; npm install ; cd ..
 cd app_kinesiologia_controlador    ; npm install ; cd ..
-cd app_kinesiologia_panel          ; npm install ; cd ..
-cd app_kinesiologia_frontend       ; npm install --legacy-peer-deps ; cd ..
+cd app_kinesiologia_frontend       ; npm install ; cd ..
 
-# 6) Arrancar (4 terminales, en este orden)
+# 6) Arrancar (3 terminales, en este orden)
 cd app_kinesiologia_logica       ; npm run dev
 cd app_kinesiologia_controlador  ; npm run dev
-cd app_kinesiologia_panel        ; npm start
 cd app_kinesiologia_frontend     ; npm start
 
 # 7) Abrir
-# http://localhost:4200  (panel docente/admin)
-# http://localhost:4201  (app estudiante)
+# http://localhost:4201  (app Auris: landing → estudiante o profesor)
 ```
