@@ -13,6 +13,7 @@ const mailer = require("../../base/utils/mailer");
 const { maskEmail } = require("../../base/utils/seguridad");
 const invRepo = require("../repositories/invitacion.repository");
 const usuarioRepo = require("../repositories/usuario.repository");
+const correos = require("../templates/correos");
 
 /* ---------- helpers ---------- */
 
@@ -117,11 +118,12 @@ async function crear(request, response) {
         let correoEnviado = false;
         let modo = "dev";
         try {
+            const tpl = correos.invitacionProfesor({ link, horas, expiraEn });
             const envio = await mailer.send({
                 to: correo,
-                subject: "Invitación a Auris — completa tu registro",
-                text: `Hola,\n\nEl administrador de Auris te invitó a registrarte como profesor.\nHaz clic en el siguiente enlace para crear tu cuenta:\n\n${link}\n\nEste enlace expira el ${expiraEn.toISOString()} (en ${horas} horas).\nSi no esperabas esta invitación puedes ignorar este correo.\n\n— Equipo Auris`,
-                html: `<p>Hola,</p><p>El administrador de Auris te invitó a registrarte como profesor.</p><p><a href="${link}">Completa tu registro aquí</a></p><p>Este enlace expira en ${horas} horas.</p>`,
+                subject: tpl.subject,
+                text: tpl.text,
+                html: tpl.html,
                 devLink: link,
             });
             modo = (envio && envio.mode) || "dev";
