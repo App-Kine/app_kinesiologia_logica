@@ -26,9 +26,9 @@ describe("pregunta.service", () => {
     beforeEach(() => jest.clearAllMocks());
 
     describe("crear — validación de longitud", () => {
-        test("rechaza enunciado > 2000 caracteres", async () => {
+        test("rechaza enunciado > 10000 caracteres", async () => {
             const req = mockRequest({
-                enunciado: "x".repeat(2001),
+                enunciado: "x".repeat(10001),
                 explicacionClinica: "explicación válida",
                 creadoPor: 1,
                 alternativas: [
@@ -39,8 +39,25 @@ describe("pregunta.service", () => {
             const res = mockResponse();
             await preguntaService.crear(req, res);
             expect(res.jsonBody.error).toBeDefined();
-            expect(res.jsonBody.error.message).toMatch(/enunciado.*2000/);
+            expect(res.jsonBody.error.message).toMatch(/enunciado.*10000/);
             expect(preguntaRepo.crearPreguntaConAlternativas).not.toHaveBeenCalled();
+        });
+
+        test("acepta enunciado de más de 2000 caracteres (NVARCHAR MAX, pedido cliente)", async () => {
+            preguntaRepo.crearPreguntaConAlternativas.mockResolvedValue(7);
+            const req = mockRequest({
+                enunciado: "x".repeat(5000),
+                explicacionClinica: "explicación válida",
+                creadoPor: 1,
+                alternativas: [
+                    { texto: "a", esCorrecta: true, orden: 1 },
+                    { texto: "b", esCorrecta: false, orden: 2 },
+                ],
+            });
+            const res = mockResponse();
+            await preguntaService.crear(req, res);
+            expect(res.jsonBody.error).toBeUndefined();
+            expect(preguntaRepo.crearPreguntaConAlternativas).toHaveBeenCalled();
         });
 
         test("rechaza explicación > 4000 caracteres", async () => {

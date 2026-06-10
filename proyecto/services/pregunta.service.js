@@ -53,11 +53,11 @@ function _validarAlternativas(alternativas) {
     return null;
 }
 
-/** Límites: enunciado NVARCHAR(2000), explicacion_clinica NVARCHAR(4000). */
+/** Límites: enunciado NVARCHAR(MAX) (tope app 10000), explicacion_clinica NVARCHAR(4000). */
 function _validarLongitudPregunta(enunciado, explicacionClinica) {
     return validarLongitudes([
-        { valor: enunciado,          max: 2000, etiqueta: "El enunciado" },
-        { valor: explicacionClinica, max: 4000, etiqueta: "La explicación clínica" },
+        { valor: enunciado,          max: 10000, etiqueta: "El enunciado" },
+        { valor: explicacionClinica, max: 4000,  etiqueta: "La explicación clínica" },
     ]);
 }
 

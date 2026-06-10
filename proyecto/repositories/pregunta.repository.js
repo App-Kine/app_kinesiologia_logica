@@ -33,7 +33,7 @@ async function crearPreguntaConAlternativas(p) {
     try {
         const reqP = new db.sql.Request(tx);
         const r = await reqP
-            .input("enunciado", db.sql.NVarChar(2000), p.enunciado)
+            .input("enunciado", db.sql.NVarChar(db.sql.MAX), p.enunciado)
             .input("explicacion_clinica", db.sql.NVarChar(4000), p.explicacionClinica)
             .input("audio_grid_id", db.sql.VarChar(24), p.audioGridId || null)
             .input("imagen_grid_id", db.sql.VarChar(24), p.imagenGridId || null)
@@ -174,7 +174,7 @@ async function editarPreguntaConAlternativas(preguntaId, p, creadoPorEsperado) {
         const reqP = new db.sql.Request(tx);
         await reqP
             .input("pregunta_id", db.sql.BigInt, preguntaId)
-            .input("enunciado", db.sql.NVarChar(2000), p.enunciado)
+            .input("enunciado", db.sql.NVarChar(db.sql.MAX), p.enunciado)
             .input("explicacion_clinica", db.sql.NVarChar(4000), p.explicacionClinica)
             .input("audio_grid_id", db.sql.VarChar(24), p.audioGridId || null)
             .input("imagen_grid_id", db.sql.VarChar(24), p.imagenGridId || null)

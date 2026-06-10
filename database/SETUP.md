@@ -148,7 +148,11 @@ npm start             # http://localhost:4201
    su contraseña (y correo) desde la app** — la app hashea sola, sin scripts.
    Alternativa solo-SQL: [`PROD_superadmin.sql`](PROD_superadmin.sql).
 4. Aplicar los índices de rendimiento: [`AurisDB_MIGRATION_indices_dueno.sql`](AurisDB_MIGRATION_indices_dueno.sql).
-5. Configurar los backends por variables de entorno (ver `.env.example`), nunca con secretos en archivos versionados.
+5. **Solo si la BD ya existía de antes** (no en instalaciones nuevas, que ya traen
+   el tipo correcto): ampliar el enunciado a `NVARCHAR(MAX)` con
+   [`AurisDB_MIGRATION_enunciado_max.sql`](AurisDB_MIGRATION_enunciado_max.sql).
+   Es idempotente y Azure-safe (no usa `USE`).
+6. Configurar los backends por variables de entorno (ver `.env.example`), nunca con secretos en archivos versionados.
 
 Respaldo y restauración: [`BACKUP.md`](BACKUP.md).
 

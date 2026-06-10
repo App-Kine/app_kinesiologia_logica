@@ -204,7 +204,7 @@ GO
 IF OBJECT_ID(N'auris.pregunta', N'U') IS NULL
 CREATE TABLE auris.pregunta (
     pregunta_id         BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY,
-    enunciado           NVARCHAR(2000)  NOT NULL,
+    enunciado           NVARCHAR(MAX)   NOT NULL,
     explicacion_clinica NVARCHAR(4000)  NOT NULL,
     audio_grid_id       VARCHAR(24)     NULL,
     imagen_grid_id      VARCHAR(24)     NULL,
