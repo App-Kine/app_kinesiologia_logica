@@ -14,3 +14,8 @@
 
 SRV_LOGICA="srv-d8kcsef7f7vs73dl8qkg"
 SRV_CONTROLADOR="srv-d8kdjpv7f7vs73dm5b2g"
+
+# URLs públicas — se usan para "calentar" los servicios tras encender (warm-up),
+# así evitas el error de cold-start si entras a la app de inmediato.
+URL_LOGICA="https://auris-logica.onrender.com"
+URL_CONTROLADOR="https://auris-controlador-ybp5.onrender.com"
