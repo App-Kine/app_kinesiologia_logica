@@ -12,5 +12,5 @@
 #    La generas en Render → Account Settings → API Keys → Create API Key.
 # =============================================================================
 
-SRV_LOGICA="srv-PEGA_AQUI_EL_ID_DE_LA_LOGICA"
-SRV_CONTROLADOR="srv-PEGA_AQUI_EL_ID_DEL_CONTROLADOR"
+SRV_LOGICA="srv-d8kcsef7f7vs73dl8qkg"
+SRV_CONTROLADOR="srv-d8kdjpv7f7vs73dm5b2g"
