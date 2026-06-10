@@ -10,6 +10,7 @@
     "prod": "SET NODE_ENV=production & nodemon index.js",
     "dev-unix": "NODE_ENV=development nodemon index.js",
     "prod-unix": "NODE_ENV=production nodemon index.js",
+    "start:cloud": "node index.js",
     "test": "jest --runInBand",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",

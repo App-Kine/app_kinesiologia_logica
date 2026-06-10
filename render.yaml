@@ -1,0 +1,62 @@
+# =============================================================================
+# Render Blueprint — LÓGICA de Auris (backend: negocio + datos + multimedia + correo)
+# -----------------------------------------------------------------------------
+# Despliega un Web Service Node. Los valores marcados `sync: false` NO van en el
+# repo: Render te los pide en el dashboard al crear el Blueprint (son secretos o
+# dependen de tu entorno). Ver guía completa en DESPLIEGUE_NUBE.md.
+#
+# Esta Lógica queda PÚBLICA en HTTPS (Render le da un dominio .onrender.com):
+#   - El Controlador la llama por esa URL (LOGICA_SECURE=true en el controlador).
+#   - El frontend la llama directo para la multimedia (por eso CORS_ORIGINS = URL del frontend).
+# =============================================================================
+services:
+  - type: web
+    name: auris-logica
+    runtime: node
+    plan: free
+    branch: main
+    buildCommand: npm install
+    startCommand: npm run start:cloud
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # --- SQL Server (Azure SQL serverless u otro) ---
+      - key: DB_HOST
+        sync: false        # ej: auris.database.windows.net
+      - key: DB_PORT
+        value: "1433"
+      - key: DB_USER
+        sync: false
+      - key: DB_PASS
+        sync: false        # SECRETO
+      - key: DB_NAME
+        value: AurisDB
+      # --- MongoDB (Atlas) ---
+      - key: MONGO_URI
+        sync: false        # connection string de Atlas (SECRETO)
+      - key: MONGO_DB
+        value: auris_media
+      # --- Seguridad ---
+      - key: JWT_SECRET
+        sync: false        # SECRETO. Debe ser EXACTAMENTE el mismo en el controlador
+      # --- CORS: el frontend pega a la lógica directo para la multimedia ---
+      - key: CORS_ORIGINS
+        sync: false        # ej: https://auris-app.netlify.app
+      # --- Enlaces de los correos (invitación / recuperar contraseña) ---
+      - key: FRONTEND_BASE_URL
+        sync: false        # ej: https://auris-app.netlify.app
+      # --- Correo saliente (opcional; déjalo así si no envías correos reales) ---
+      - key: MAIL_MODE
+        value: dev         # "smtp" para enviar de verdad (y completar SMTP_* abajo)
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        value: "465"
+      - key: SMTP_SECURE
+        value: "true"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false        # SECRETO (App Password)
+      - key: MAIL_FROM
+        sync: false
