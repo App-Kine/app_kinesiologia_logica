@@ -271,6 +271,7 @@ async function obtenerConAplicaciones(request, response) {
                 SELECT  apl.aplicacion_id,
                         apl.aplicacion_uuid,
                         apl.test_id,
+                        apl.orden,
                         t.nombre  AS test_nombre,
                         (SELECT COUNT(*) FROM auris.test_pregunta tp
                            WHERE tp.test_id = t.test_id) AS cantidad_preguntas,
@@ -285,7 +286,9 @@ async function obtenerConAplicaciones(request, response) {
                 LEFT JOIN auris.usuario u ON u.usuario_id = apl.profesor_id
                 WHERE   apl.curso_id = @curso_id
                   AND   t.activo = 1
-                ORDER BY apl.created_at DESC;
+                -- Orden por defecto estable; el orden definitivo (manual +
+                -- nombre natural) lo aplica el frontend.
+                ORDER BY (CASE WHEN apl.orden IS NULL THEN 1 ELSE 0 END), apl.orden, apl.created_at DESC;
             `);
 
         const curso = rCurso.recordset[0];

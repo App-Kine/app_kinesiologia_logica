@@ -24,6 +24,7 @@ async function listarAplicacionesActivasPorCurso(cursoId) {
             SELECT  a.aplicacion_id,
                     a.aplicacion_uuid,
                     a.test_id,
+                    a.orden,
                     t.nombre AS test_nombre,
                     t.descripcion AS test_descripcion,
                     (SELECT COUNT(*) FROM auris.test_pregunta tp
@@ -35,7 +36,9 @@ async function listarAplicacionesActivasPorCurso(cursoId) {
               AND   t.activo = 1
               AND   (a.visible_desde IS NULL OR a.visible_desde <= SYSUTCDATETIME())
               AND   (a.visible_hasta IS NULL OR a.visible_hasta >= SYSUTCDATETIME())
-            ORDER BY a.created_at DESC;
+            -- El orden definitivo (orden manual + nombre natural) lo aplica el
+            -- frontend; aquí solo damos un orden estable por defecto.
+            ORDER BY (CASE WHEN a.orden IS NULL THEN 1 ELSE 0 END), a.orden, a.created_at DESC;
         `);
     return r.recordset;
 }

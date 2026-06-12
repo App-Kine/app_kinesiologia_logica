@@ -300,6 +300,7 @@ CREATE TABLE auris.aplicacion_test (
     activo              BIT             NOT NULL CONSTRAINT DF_apl_activo DEFAULT (1),
     visible_desde       DATETIME2(3)    NULL,
     visible_hasta       DATETIME2(3)    NULL,
+    orden               INT             NULL,   -- orden manual del profesor dentro del curso (NULL = sin reordenar → se usa el nombre)
     created_at          DATETIME2(3)    NOT NULL CONSTRAINT DF_apl_created DEFAULT (SYSUTCDATETIME()),
     updated_at          DATETIME2(3)    NOT NULL CONSTRAINT DF_apl_updated DEFAULT (SYSUTCDATETIME()),
     CONSTRAINT FK_apl_test  FOREIGN KEY (test_id)     REFERENCES auris.test(test_id),

@@ -152,7 +152,11 @@ npm start             # http://localhost:4201
    el tipo correcto): ampliar el enunciado a `NVARCHAR(MAX)` con
    [`AurisDB_MIGRATION_enunciado_max.sql`](AurisDB_MIGRATION_enunciado_max.sql).
    Es idempotente y Azure-safe (no usa `USE`).
-6. Configurar los backends por variables de entorno (ver `.env.example`), nunca con secretos en archivos versionados.
+6. **Solo si la BD ya existía de antes**: agregar la columna de orden de los
+   tests por curso con
+   [`AurisDB_MIGRATION_aplicacion_orden.sql`](AurisDB_MIGRATION_aplicacion_orden.sql).
+   Es idempotente y Azure-safe.
+7. Configurar los backends por variables de entorno (ver `.env.example`), nunca con secretos en archivos versionados.
 
 Respaldo y restauración: [`BACKUP.md`](BACKUP.md).
 

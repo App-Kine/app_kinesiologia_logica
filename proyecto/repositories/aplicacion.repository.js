@@ -90,6 +90,7 @@ async function listarPorProfesor(profesorId, cursoId, opciones = {}) {
             SELECT  a.aplicacion_id,
                     a.aplicacion_uuid,
                     a.test_id,
+                    a.orden,
                     t.nombre        AS test_nombre,
                     a.curso_id,
                     c.codigo        AS curso_codigo,
@@ -136,9 +137,43 @@ async function setActivo(aplicacionId, activo, profesorId) {
     return r.recordset[0].filas > 0;
 }
 
+/**
+ * Reordena las aplicaciones de un curso: asigna orden = 1..N siguiendo el orden
+ * de `aplicacionIds`. Solo afecta filas del curso indicado (el caller ya validó
+ * que el profesor pertenece al curso — RF-71). Atómico (transacción): si algo
+ * falla, no queda un orden a medias. Devuelve cuántas filas se actualizaron.
+ */
+async function reordenar(cursoId, aplicacionIds) {
+    const pool = db.getPool("auris");
+    const tx = new db.sql.Transaction(pool);
+    await tx.begin();
+    try {
+        let filas = 0;
+        for (let i = 0; i < aplicacionIds.length; i++) {
+            const r = await new db.sql.Request(tx)
+                .input("orden", db.sql.Int, i + 1)
+                .input("aplicacion_id", db.sql.BigInt, aplicacionIds[i])
+                .input("curso_id", db.sql.BigInt, cursoId)
+                .query(`
+                    UPDATE auris.aplicacion_test
+                    SET    orden = @orden, updated_at = SYSUTCDATETIME()
+                    WHERE  aplicacion_id = @aplicacion_id AND curso_id = @curso_id;
+                    SELECT @@ROWCOUNT AS filas;
+                `);
+            filas += r.recordset[0].filas;
+        }
+        await tx.commit();
+        return filas;
+    } catch (e) {
+        try { await tx.rollback(); } catch (_) {}
+        throw e;
+    }
+}
+
 module.exports = {
     profesorPerteneceACurso,
     crearAplicacion,
     listarPorProfesor,
     setActivo,
+    reordenar,
 };

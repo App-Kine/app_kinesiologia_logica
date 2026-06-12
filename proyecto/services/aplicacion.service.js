@@ -233,9 +233,50 @@ async function eliminar(request, response) {
     }
 }
 
+/**
+ * Reordena las aplicaciones de un curso (pedido cliente 2026-06: dejar los tests
+ * de cada curso en un orden definido por el profesor). Recibe el `cursoId` y el
+ * arreglo `aplicacionIds` en el orden deseado; asigna orden = 1..N.
+ *
+ * Anti-IDOR (RNF-19 / RF-71): el profesor debe estar asignado al curso. El
+ * `profesorId` lo inyecta el controlador desde el JWT (no se confía en el body).
+ */
+async function reordenar(request, response) {
+    const b = _leerArg(request);
+    const cursoId = Number(b.cursoId);
+    const cp = Number(b.profesorId);
+    const profesorId = Number.isInteger(cp) && cp > 0 ? cp : null;
+    const ids = Array.isArray(b.aplicacionIds)
+        ? b.aplicacionIds.map(Number).filter((n) => Number.isInteger(n) && n > 0)
+        : [];
+    logger.log(`${TAG} reordenar: curso=${cursoId} n=${ids.length} prof=${profesorId || 'sin-filtro'}`);
+    try {
+        if (!Number.isInteger(cursoId) || cursoId <= 0) {
+            return response.json(reply.error("cursoId requerido"));
+        }
+        if (ids.length === 0) {
+            return response.json(reply.error("aplicacionIds requerido"));
+        }
+        if (profesorId !== null) {
+            const pertenece = await aplicacionRepo.profesorPerteneceACurso(profesorId, cursoId);
+            if (!pertenece) {
+                logger.log(`${TAG} reordenar: DENEGADO prof=${profesorId} no pertenece a curso=${cursoId}`);
+                return response.json(reply.error("Curso no encontrado"));
+            }
+        }
+        const actualizadas = await aplicacionRepo.reordenar(cursoId, ids);
+        logger.log(`${TAG} reordenar: OK ${actualizadas} filas`);
+        response.json(reply.ok({ curso_id: cursoId, actualizadas }));
+    } catch (e) {
+        logger.log(`${TAG_ERR} reordenar: ${e.message}`, e);
+        response.json(reply.fatal(e));
+    }
+}
+
 module.exports = {
     crear,
     listar,
     setActivo,
     eliminar,
+    reordenar,
 };

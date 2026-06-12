@@ -109,3 +109,27 @@ describe("setActivo", () => {
         expect(harness.queries[0].inputs.profesor_id).toBeNull();
     });
 });
+
+describe("reordenar", () => {
+    test("asigna orden 1..N en el orden recibido y filtra por curso", async () => {
+        harness.queueResult({ recordset: [{ filas: 1 }] });
+        harness.queueResult({ recordset: [{ filas: 1 }] });
+        harness.queueResult({ recordset: [{ filas: 1 }] });
+
+        const out = await repo.reordenar(3, [20, 10, 30]);
+
+        expect(out).toBe(3);
+        expect(harness.queries[0].inputs).toMatchObject({ orden: 1, aplicacion_id: 20, curso_id: 3 });
+        expect(harness.queries[1].inputs).toMatchObject({ orden: 2, aplicacion_id: 10, curso_id: 3 });
+        expect(harness.queries[2].inputs).toMatchObject({ orden: 3, aplicacion_id: 30, curso_id: 3 });
+    });
+
+    test("una aplicación que no es del curso (0 filas) no se cuenta", async () => {
+        harness.queueResult({ recordset: [{ filas: 1 }] });
+        harness.queueResult({ recordset: [{ filas: 0 }] });
+
+        const out = await repo.reordenar(3, [20, 99]);
+
+        expect(out).toBe(1);
+    });
+});
